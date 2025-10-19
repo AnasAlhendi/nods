@@ -1,6 +1,6 @@
 // App script (classic). Uses NodeUI from node.js (window.NodeUI).
 
-// Canvas state
+// Canvas stadokte
 const state = {
   scale: 1,
   pan: { x: 0, y: 0 },
