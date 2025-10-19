@@ -1,4 +1,4 @@
-// Basic UI and node editor per test.md spec (ES modules, no window globals)
+﻿// Basic UI and node editor per test.md spec (ES modules, no window globals)
 // NodeUI class (embedded for classic script usage)
 class NodeUI {
   buildNodeElement(n, { onOpenConfig, onOpenEdit, onOpenHelp, onStartDrag, onConnectToggle, onEnableChange, connectingFromId, connectChecked, dragEnabled = false, onPositionChange, onDragStart, onDragEnd, getScale, controls = {} } = {}) {
@@ -16,6 +16,23 @@ class NodeUI {
     option.setAttribute('tabindex', '0');
     option.setAttribute('aria-label', `${n.label} ${n.tag || ''}`.trim());
     if (n.state === 'disabled') option.setAttribute('aria-disabled', 'true');
+
+    // Optional icon support inside the node pill
+    let iconWrap = null;
+    if (n.icon) {
+      iconWrap = document.createElement('span');
+      iconWrap.className = 'state-icon';
+      const iconStr = String(n.icon).trim();
+      if (iconStr.startsWith('<svg')) {
+        iconWrap.innerHTML = iconStr;
+      } else if (/^https?:\/\//i.test(iconStr) || /\.(png|jpe?g|gif|svg)$/i.test(iconStr)) {
+        const img = document.createElement('img');
+        img.src = iconStr; img.alt = ''; img.width = 18; img.height = 18; img.decoding = 'async';
+        iconWrap.appendChild(img);
+      } else {
+        iconWrap.textContent = iconStr; // emoji or short text
+      }
+    }
 
     const label = document.createElement('span');
     label.className = 'label';
@@ -65,7 +82,7 @@ class NodeUI {
       btnEdit.className = 'mini-btn';
       btnEdit.title = 'Bearbeiten';
       btnEdit.setAttribute('aria-label', 'Bearbeiten');
-      btnEdit.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1.003 1.003 0 0 0 0-1.42l-2.34-2.34a1.003 1.003 0 0 0-1.42 0l-1.83 1.83 3.75 3.75 1.84-1.82z"/></svg>';
+      btnEdit.innerHTML = (NodeUI.ICONS && NodeUI.ICONS.edit) ? NodeUI.ICONS.edit : '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1.003 1.003 0 0 0 0-1.42l-2.34-2.34a1.003 1.003 0 0 0-1.42 0l-1.83 1.83 3.75 3.75 1.84-1.82z"/></svg>';
       if (editCfg.disabled || n.state === 'disabled') btnEdit.disabled = true;
       btnEdit.addEventListener('click', (ev) => { ev.stopPropagation(); onOpenEdit && onOpenEdit(n.id); });
     }
@@ -76,13 +93,14 @@ class NodeUI {
       btnHelp.className = 'mini-btn';
       btnHelp.title = 'Hilfe';
       btnHelp.setAttribute('aria-label', 'Hilfe');
-      btnHelp.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 17h-2v-2h2v2zm2.07-7.75-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26a2 2 0 1 0-3.41-1.41H8a4 4 0 1 1 7.07 2.25z"/></svg>';
+      btnHelp.innerHTML = (NodeUI.ICONS && NodeUI.ICONS.help) ? NodeUI.ICONS.help : '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 17h-2v-2h2v2zm2.07-7.75-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26a2 2 0 1 0-3.41-1.41H8a4 4 0 1 1 7.07 2.25z"/></svg>';
       if (helpCfg.disabled || n.state === 'disabled') btnHelp.disabled = true;
       btnHelp.addEventListener('click', (ev) => { ev.stopPropagation(); onOpenHelp && onOpenHelp(n.id); });
     }
 
     if (enable) option.appendChild(enable);
     if (connect) option.appendChild(connect);
+    if (iconWrap) option.appendChild(iconWrap);
     option.appendChild(label);
     if (btnEdit) actions.appendChild(btnEdit);
     if (btnHelp) actions.appendChild(btnHelp);
@@ -91,7 +109,7 @@ class NodeUI {
     if (n.state === 'warning') {
       const badge = document.createElement('span');
       badge.className = 'warning-badge';
-      badge.title = 'Unvollständige Konfiguration';
+      badge.title = 'UnvollstÃ¤ndige Konfiguration';
       option.appendChild(badge);
     }
 
@@ -135,6 +153,15 @@ class NodeUI {
   optionSelector(id) { return document.querySelector(`[data-node-id="${id}"] .option-js`); }
 }
 
+// Centralized icon set for NodeUI controls
+NodeUI.ICONS = {
+  edit: `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1.003 1.003 0 0 0 0-1.42l-2.34-2.34a1.003 1.003 0 0 0-1.42 0l-1.83 1.83 3.75 3.75 1.84-1.82z"/></svg>`,
+  help: `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 17h-2v-2h2v2zm2.07-7.75-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26a2 2 0 1 0-3.41-1.41H8a4 4 0 1 1 7.07 2.25z"/></svg>`,
+  check: `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>`,
+  warn: `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>`,
+  dot:  `<svg viewBox="0 0 24 24" width="10" height="10" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor"/></svg>`,
+};
+
 // Canvas state
 const state = {
   scale: 1,
@@ -151,10 +178,10 @@ function emit(eventName, detail) {
 // Example data model (can be saved as JSON)
 // Node { id, label, tag?, state: 'enabled'|'disabled'|'warning', position: {x,y}, connections: string[] }
 const nodes = new Map([
-  ['start', { id: 'start', label: 'Sprachauswahl', tag: '(Start)',  state: 'enabled', position: { x: 160,  y: 220 }, connections: ['menu'] }],
-  ['menu',  { id: 'menu',  label: 'Men\u00FC',         tag: '(Weiter)', state: 'enabled', position: { x: 1040, y: 300 }, connections: ['end'] }],
-  ['help',  { id: 'help',  label: 'Hilfe',          tag: '',        state: 'warning', position: { x: 240,  y: 640 }, connections: [] }],
-  ['end',   { id: 'end',   label: 'Beenden',        tag: '',        state: 'disabled', position: { x: 1480, y: 720 }, connections: [] }],
+  ['start', { id: 'start', label: 'Sprachauswahl', tag: '(Start)',  state: 'enabled', position: { x: 160,  y: 220 }, connections: ['menu'], events: [] }],
+  ['menu',  { id: 'menu',  label: 'Menu00FC',         tag: '(Weiter)', state: 'enabled', position: { x: 1040, y: 300 }, connections: ['end'],  events: [] }],
+  ['help',  { id: 'help',  label: 'Hilfe',          tag: '',        state: 'warning', position: { x: 240,  y: 640 }, connections: [],          events: [] }],
+  ['end',   { id: 'end',   label: 'Beenden',        tag: '',        state: 'disabled', position: { x: 1480, y: 720 }, connections: [],          events: [] }],
 ]);
 
 // DOM refs
@@ -242,16 +269,16 @@ function renderNodes() {
   nodesLayer.innerHTML = '';
   nodes.forEach(n => {
     const el = nodesUI.buildNodeElement(n, {
-      onOpenConfig: optionClick,
-      onOpenEdit: openEditDialog,
-      onOpenHelp: showHelp,
-      onConnectToggle: (id, checked) => onConnectToggle(id, checked),
+      // Record and forward events so each node keeps its own event log
+      onOpenConfig: (id) => { recordNodeEvent(id, 'open-config'); optionClick(id); },
+      onOpenEdit:  (id) => { recordNodeEvent(id, 'open-edit'); openEditDialog(id); },
+      onOpenHelp:  (id) => { recordNodeEvent(id, 'open-help'); showHelp(id); },
+      onConnectToggle: (id, checked) => { recordNodeEvent(id, 'connect-toggle', { checked }); onConnectToggle(id, checked); },
       onEnableChange: (id, enabled) => {
-        const node = nodes.get(id);
-        if (!node) return;
+        recordNodeEvent(id, 'enable-change', { enabled });
+        const node = nodes.get(id); if (!node) return;
         node.state = enabled ? 'enabled' : 'disabled';
         if (!enabled) {
-          // Clear its outgoing connection when disabled
           node.lastTarget = Array.isArray(node.connections) && node.connections[0] ? node.connections[0] : node.lastTarget;
           node.connections = [];
           if (state.connectingFrom === id) state.connectingFrom = null;
@@ -264,7 +291,9 @@ function renderNodes() {
       // Dragging managed inside NodeUI
       dragEnabled: true,
       getScale: () => state.scale,
-      onPositionChange: () => renderConnections(),
+      onDragStart: (nodeObj) => recordNodeEvent(nodeObj.id, 'drag-start', { position: { ...nodeObj.position } }),
+      onPositionChange: (nodeObj) => { recordNodeEvent(nodeObj.id, 'position-change', { position: { ...nodeObj.position } }); renderConnections(); },
+      onDragEnd: (nodeObj) => recordNodeEvent(nodeObj.id, 'drag-end', { position: { ...nodeObj.position } }),
       controls: {
         enableToggle: { visible: true },
         connectToggle: { visible: true },
@@ -274,6 +303,14 @@ function renderNodes() {
     });
     nodesLayer.appendChild(el);
   });
+}
+
+// Helper: append an event record into the node's events array
+function recordNodeEvent(id, name, payload) {
+  const node = nodes.get(id);
+  if (!node) return;
+  if (!Array.isArray(node.events)) node.events = [];
+  node.events.push({ name, at: Date.now(), ...(payload ? { payload } : {}) });
 }
 
 function iconForState(state) {
