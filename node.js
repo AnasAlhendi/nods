@@ -37,6 +37,18 @@ class NodeUI {
     option.setAttribute('aria-label', `${n.label} ${n.tag || ''}`.trim());
     if (n.state === 'disabled') option.setAttribute('aria-disabled', 'true');
 
+    // Optional icon support inside the node pill
+    let iconWrap = null;
+    if (n.icon) {
+      iconWrap = document.createElement('span');
+      iconWrap.className = 'state-icon';
+      const iconStr = String(n.icon).trim();
+      if (iconStr.startsWith('<svg')) { iconWrap.innerHTML = iconStr; }
+      else if (/ ^https?: \\/\\//i.test(iconStr) || /\\.(png|jpe?g|gif|svg) $/i.test(iconStr)) { 
+        const img = document.createElement('img'); img.src = iconStr; img.alt = ''; img.width = 18; img.height = 18; img.decoding = 'async';
+        iconWrap.appendChild(img);
+      } else { iconWrap.textContent = iconStr; }
+    }
     const label = document.createElement('span');
     label.className = 'label';
     label.innerHTML = `${escapeHtml(n.label)}${n.tag ? ` <span class="tag">${escapeHtml(n.tag)}</span>` : ''}`;
@@ -109,6 +121,7 @@ class NodeUI {
     // Order: enable â€¢ connect â€¢ label â€¢ actions
     if (enable) option.appendChild(enable);
     if (connect) option.appendChild(connect);
+    if (iconWrap) option.appendChild(iconWrap);
     if (iconWrap) option.appendChild(iconWrap);
     option.appendChild(label);
     if (btnEdit) actions.appendChild(btnEdit);
