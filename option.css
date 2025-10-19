@@ -1,0 +1,37 @@
+.option-js {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: 34px;
+  padding: 0 12px;
+  gap: 8px;
+  background: var(--blue-900);
+  color: var(--white);
+  font-weight: 600;
+  font-size: 14px;
+  border-radius: 17px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 120ms ease;
+  outline: none;
+}
+
+.option-js:hover { background: var(--blue-800); }
+.option-js:active { background: var(--blue-700); }
+.option-js.focus-ring { box-shadow: 0 0 0 2px var(--blue-600); }
+
+.option-js .state-icon { width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; }
+.option-js .label { white-space: nowrap; }
+.option-js .label .tag { font-weight: 600; opacity: 0.9; margin-left: 4px; }
+.option-js .actions { display: inline-flex; gap: 2px; margin-left: 4px; }
+.option-js .connect-toggle { display: inline-flex; align-items: center; margin-right: 4px; }
+.option-js .connect-toggle input { width: 16px; height: 16px; cursor: pointer; }
+.option-js .actions .mini-btn {
+  width: 24px; height: 24px; border: none; background: transparent; color: var(--white);
+  border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.option-js .actions .mini-btn:hover { background: rgba(255,255,255,0.12); }
+
+.option-js .warning-badge {
+  position: absolute; right: -4px; top: -4px; width: 10px; height: 10px; background: #E02424; border-radius: 999px; border: 2px solid var(--white);
+}

@@ -1,0 +1,9 @@
+.node-js {
+  position: absolute; /* free-form placement container */
+}
+
+.node-js.disabled .option-js {
+  background: #59779A;
+  opacity: 0.6;
+  cursor: default;
+}
