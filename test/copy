@@ -12,27 +12,27 @@ const state = {
 // Data model (array of nodes)
 const nodes = [
   { id: 'start', label: 'Sprachauswahl', tag: '(Start)',  state: 'enabled', position: { x: 160,  y: 220 },
-    openConfig:   (id) => {},
-    openHelp:     (id) => {},
-    openEdit:     (id) => {},
+    openConfig:   (id) => {console.log(id)},
+    openHelp:     (id) => {console.log(id)},
+    openEdit:     (id) => {console.log(id)},
     onChangeCheckbox: (id, enabled) => {},
   },
   { id: 'menu',  label: 'Menu00FC',       tag: '(Weiter)', state: 'enabled', position: { x: 1040, y: 300 },
-    openConfig:   (id) => {},
-    openHelp:     (id) => {},
-    openEdit:     (id) => {},
+    openConfig:   (id) => {console.log(id)},
+    openHelp:     (id) => {console.log(id)},
+    openEdit:     (id) => {console.log(id)},
     onChangeCheckbox: (id, enabled) => {},
   },
   { id: 'help',  label: 'Hilfe',          tag: '',        state: 'warning', position: { x: 240,  y: 640 },
-    openConfig:   (id) => {},
-    openHelp:     (id) => {},
-    openEdit:     (id) => {},
+    openConfig:   (id) => {console.log(id)},
+    openHelp:     (id) => {console.log(id)},
+    openEdit:     (id) => {console.log(id)},
     onChangeCheckbox: (id, enabled) => {},
   },
   { id: 'end',   label: 'Beenden',        tag: '',        state: 'disabled', position: { x: 1480, y: 720 },
-    openConfig:   (id) => { console.log(id)},
-    openHelp:     (id) => {},
-    openEdit:     (id) => {},
+    openConfig:   (id) => {console.log(id)},
+    openHelp:     (id) => {console.log(id)},
+    openEdit:     (id) => {console.log(id)},
     onChangeCheckbox: (id, enabled) => {},
   },
 ];
@@ -41,13 +41,17 @@ const nodes = [
 // Create canvas structure and render via NodeUI.build
 const nodesUI = new NodeUI();
 const targetContainer = '.canvas-container';
-nodesUI.build(targetContainer, nodes, {
+var buildOut = nodesUI.build(targetContainer, nodes, {
   width: 2000,
   height: 1200,
   panZoomEnabled: true,
   state: state,
   connection: ["start","menu","help"]
 });
+var canvasWrapper = buildOut.wrapper;
+var canvasInner = buildOut.inner;
+var svg = buildOut.svg;
+var nodesLayer = buildOut.nodesLayer;
 
 // Header buttons (without optional chaining for wider browser support)
 var btnSettings = document.getElementById('btnSettings');
@@ -68,3 +72,40 @@ function openModal(title, contentNode) { modalTitle.textContent = title; modalBo
 function closeModal() { modal.setAttribute('aria-hidden', 'true'); }
 
 // getNode moved into NodeUI (nodesUI.getNode)
+
+function openSettings() {
+  const pan = nodesUI.getPan ? nodesUI.getPan() : { x: 0, y: 0 };
+  const scale = nodesUI.getScale ? nodesUI.getScale() : 1;
+  const div = document.createElement('div');
+  div.innerHTML = `
+    <p>Konfigurationsdialog (Platzhalter).</p>
+    <ul>
+      <li>UI-Skalierung: <code>${scale.toFixed(2)}</code></li>
+      <li>Pan: <code>(${Math.round(pan.x)}, ${Math.round(pan.y)})</code></li>
+      <li>Knoten: <code>${nodes.length}</code></li>
+    </ul>
+  `;
+  openModal('Einstellungen', div);
+}
+
+
+
+// Dynamically apply a connection train and disable others to highlight it
+function applyConnectionTrain(chain) {
+  if (!Array.isArray(chain) || chain.length < 2) return;
+  for (var i = 0; i < nodes.length; i++) {
+    var inChain = chain.indexOf(nodes[i].id) !== -1;
+    nodes[i].state = inChain ? 'enabled' : 'disabled';
+  }
+  nodesUI.setNodes(nodes);
+  // Let NodeUI train logic set connections strictly from chain and enabled state
+  nodesUI.applyTrain(chain);
+}
+
+// Example: connect start -> menu -> help and disable others to emphasize the link
+applyConnectionTrain(["start","menu","help"]);
+
+// (node event recording removed)
+
+// Build already rendered initial view; keep connections in sync on resize
+addEventListener('resize', () => { nodesUI.renderConnections(svg, canvasInner, nodes); });

@@ -1,6 +1,22 @@
-﻿// Node UI class: builds node DOM and exposes helpers (ES module)
+// Node UI class: builds node DOM and exposes helpers (ES module)
 
 class NodeUI {
+  static ICONS = {
+    edit: `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1.003 1.003 0 0 0 0-1.42l-2.34-2.34a1.003 1.003 0 0 0-1.42 0l-1.83 1.83 3.75 3.75 1.84-1.82z"/></svg>`,
+    help: `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 17h-2v-2h2v2zm2.07-7.75-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26a2 2 0 1 0-3.41-1.41H8a4 4 0 1 1 7.07 2.25z"/></svg>`,
+    check: `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>`,
+    warn: `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>`,
+    dot:  `<svg viewBox="0 0 24 24" width="10" height="10" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor"/></svg>`,
+  };
+  constructor(){
+    this._scale = 1;
+    this._pan = { x: 0, y: 0 };
+    this._pz = { enabled: false };
+    this._ctx = null; // { wrapper, inner, svg, nodesLayer, nodes }
+    this._getRenderOptions = null;
+  }
+
+  // (getNode removed; not used by current app)
   buildNodeElement(
     n,
     {
@@ -76,7 +92,49 @@ class NodeUI {
       enableInput.addEventListener('click', (ev) => {
         ev.stopPropagation();
         const nextEnabled = !!enableInput.checked;
+        // Always apply default toggle/disconnect/reconnect behavior
+        n.state = nextEnabled ? 'enabled' : 'disabled';
+        if (!nextEnabled) {
+          if (Array.isArray(n.connections) && n.connections[0]) {
+            n.lastTarget = n.connections[0];
+          }
+          n.connections = [];
+          if (this._ctx && this._ctx.state && this._ctx.state.connectingFrom === n.id) {
+            this._ctx.state.connectingFrom = null;
+          }
+          // Also update inbound links pointing to this node
+          if (this._ctx && this._ctx.nodes) {
+            const nodesRef = this._ctx.nodes;
+            const isMap = nodesRef && typeof nodesRef.get === 'function';
+            const list = isMap ? Array.from(nodesRef.values()) : (Array.isArray(nodesRef) ? nodesRef : []);
+            // Determine train neighbors for bypass
+            let nextInTrain = null, prevInTrain = null;
+            if (this._ctx && Array.isArray(this._ctx.train)) {
+              const idx = this._ctx.train.indexOf(n.id);
+              if (idx > 0) prevInTrain = this._ctx.train[idx - 1];
+              if (idx >= 0 && idx < this._ctx.train.length - 1) nextInTrain = this._ctx.train[idx + 1];
+            }
+            list.forEach(m => {
+              if (!m || !Array.isArray(m.connections)) return;
+              if (m.connections.indexOf(n.id) !== -1) {
+                // Remember original upstream target as this node
+                m.lastTarget = n.id;
+                // If train info available and there is a next after this node, bypass to it
+                if (nextInTrain) {
+                  m.connections = [nextInTrain];
+                } else {
+                  m.connections = [];
+                }
+              }
+            });
+          }
+        } else {
+          // Recompute all connections from train for current enabled/disabled state
+          this._applyConnectionsFromTrain();
+        }
+        // Notify callback if present (after state changes)
         if (typeof onEnableChange === 'function') onEnableChange(n.id, nextEnabled);
+        if (this._ctx) this.refresh(this._getRenderOptions ? this._getRenderOptions() : undefined);
       });
       enable.appendChild(enableInput);
     }
@@ -119,7 +177,7 @@ class NodeUI {
       btnHelp.addEventListener('click', (ev) => { ev.stopPropagation(); onOpenHelp && onOpenHelp(n.id); });
     }
 
-    // Order: enable â€¢ connect â€¢ label â€¢ actions
+    // Order: enable • connect • label • actions
     if (enable) option.appendChild(enable);
     if (connect) option.appendChild(connect);
     if (iconWrap) option.appendChild(iconWrap);
@@ -131,7 +189,7 @@ class NodeUI {
     if (n.state === 'warning') {
       const badge = document.createElement('span');
       badge.className = 'warning-badge';
-      badge.title = 'UnvollstÃ¤ndige Konfiguration';
+      badge.title = 'Unvollständige Konfiguration';
       option.appendChild(badge);
     }
 
@@ -185,6 +243,181 @@ class NodeUI {
     return container;
   }
 
+  // Ensure a canvas structure exists inside a container, creating if missing.
+  // Returns references: { wrapper, inner, svg, nodesLayer }
+  ensureCanvas(container, { width = 2000, height = 1200, panZoomEnabled = false } = {}) {
+    if (!container) throw new Error('ensureCanvas: container is required');
+    let wrapper = container.querySelector('.canvas-wrapper');
+    if (!wrapper) {
+      wrapper = document.createElement('div');
+      wrapper.className = 'canvas-wrapper';
+      container.appendChild(wrapper);
+    }
+    let inner = wrapper.querySelector('.canvas-inner');
+    if (!inner) {
+      inner = document.createElement('div');
+      inner.className = 'canvas-inner';
+      wrapper.appendChild(inner);
+    }
+    if (!inner.style.width) inner.style.width = width + 'px';
+    if (!inner.style.height) inner.style.height = height + 'px';
+
+    let svg = inner.querySelector('svg.connections-layer');
+    if (!svg) {
+      svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('class', 'connections-layer');
+      inner.appendChild(svg);
+    }
+    let nodesLayer = inner.querySelector('.nodes-layer');
+    if (!nodesLayer) {
+      nodesLayer = document.createElement('div');
+      nodesLayer.className = 'nodes-layer';
+      inner.appendChild(nodesLayer);
+    }
+
+    svg.setAttribute('width', inner.style.width || (width + 'px'));
+    svg.setAttribute('height', inner.style.height || (height + 'px'));
+    svg.setAttribute('viewBox', `0 0 ${parseInt(inner.style.width||width)} ${parseInt(inner.style.height||height)}`);
+
+    // Optionally enable pan & zoom
+    if (panZoomEnabled) this.enablePanZoom(wrapper, inner, { enabled: true });
+    return { wrapper, inner, svg, nodesLayer };
+  }
+
+  // Convenience: create canvas in a container and render nodes + connections.
+  // Returns the created DOM references.
+  renderInto(container, nodes, options = {}, canvasOptions = {}) {
+    const { svg, inner, nodesLayer } = this.ensureCanvas(container, canvasOptions);
+    this.rerender(nodesLayer, svg, inner, nodes, options);
+    return { svg, canvasInner: inner, nodesLayer };
+  }
+
+  // Build helper: nodesUI.build(target, nodes, option)
+  // - target: selector string (e.g., '.canvas-container'), HTMLElement, or object with { target } or { traget }
+  // - nodes: Map or Array of nodes
+  // - option: { width, height, panZoomEnabled, connectingFromId, recordNodeEvent, renderOptions }
+  build(target, nodes, option = {}){
+    let mount = null;
+    if (typeof target === 'string') {
+      mount = document.querySelector(target) || document.body;
+    } else if (target && typeof target === 'object' && (target.target || target.traget)) {
+      const sel = target.target || target.traget;
+      mount = typeof sel === 'string' ? (document.querySelector(sel) || document.body) : (sel || document.body);
+    } else if (target && target.nodeType === 1) {
+      mount = target;
+    } else {
+      mount = document.body;
+    }
+
+    const width = typeof option.width === 'number' ? option.width : 2000;
+    const height = typeof option.height === 'number' ? option.height : 1200;
+    const panZoomEnabled = !!option.panZoomEnabled;
+    const recordNodeEvent = option.recordNodeEvent;
+
+    const { wrapper, inner, svg, nodesLayer } = this.ensureCanvas(mount, { width, height, panZoomEnabled });
+
+    // If state is provided, apply initial pan/scale
+    if (option.state && typeof option.state === 'object') {
+      if (typeof option.state.scale === 'number') this.setScale(option.state.scale, inner);
+      if (option.state.pan && typeof option.state.pan.x === 'number' && typeof option.state.pan.y === 'number') {
+        this.setPan(option.state.pan, inner);
+      }
+    }
+
+    // Parse connection chain (train) if provided
+    let parsedTrain = [];
+    if (option.connection) {
+      if (Array.isArray(option.connection)) parsedTrain = option.connection.slice();
+      else if (typeof option.connection === 'string') {
+        parsedTrain = option.connection.split(/[>,\s,]+/).map(s => s.trim()).filter(Boolean);
+      }
+      // do not set here; applied below
+    }
+
+    const recordEvent = recordNodeEvent;
+    const makeOptions = () => option.renderOptions || this.defaultRenderOptions(
+      (option.state
+        ? { connectingFrom: (option.state.connectingFromId ?? option.state.connectingFrom ?? null), scale: (typeof option.state.scale === 'number' ? option.state.scale : (typeof this.getScale === 'function' ? this.getScale() : 1)) }
+        : { connectingFrom: option.connectingFromId || null, scale: (typeof this.getScale === 'function' ? this.getScale() : 1) }
+      ),
+      svg,
+      inner,
+      this._ctx ? this._ctx.nodes : nodes,
+      recordEvent
+    );
+    // store context for future auto-renders
+    this._ctx = { wrapper, inner, svg, nodesLayer, nodes, state: option.state || null, train: parsedTrain };
+    this._getRenderOptions = makeOptions;
+    // Apply train-derived connections once before first render
+    this._applyConnectionsFromTrain();
+    this.rerender(nodesLayer, svg, inner, nodes, makeOptions());
+    return { wrapper, inner, svg, nodesLayer };
+  }
+
+  setNodes(nodes){ if (this._ctx) this._ctx.nodes = nodes; }
+  refresh(options){ if (!this._ctx) return; this.rerender(this._ctx.nodesLayer, this._ctx.svg, this._ctx.inner, this._ctx.nodes, options || (this._getRenderOptions ? this._getRenderOptions() : {})); }
+
+  // Pan & zoom management
+  enablePanZoom(wrapper, inner, { enabled = true } = {}){
+    if (!enabled) return this.disablePanZoom();
+    this.disablePanZoom();
+    const onWheel = (e) => {
+      if (!e.ctrlKey) return; // only zoom with Ctrl
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.1 : 0.9;
+      const prev = this._scale;
+      const next = Math.max(0.4, Math.min(2.5, prev * factor));
+      const rect = wrapper.getBoundingClientRect();
+      const cx = (e.clientX - rect.left - this._pan.x) / prev;
+      const cy = (e.clientY - rect.top - this._pan.y) / prev;
+      this._pan.x -= cx * (next - prev);
+      this._pan.y -= cy * (next - prev);
+      this._scale = next;
+      this._applyTransform(inner);
+    };
+    let panning = false; let panStart = { x: 0, y: 0 };
+    const onPanMove = (e) => {
+      if (!panning) return;
+      this._pan.x = e.clientX - panStart.x;
+      this._pan.y = e.clientY - panStart.y;
+      this._applyTransform(inner);
+    };
+    const onPanEnd = () => {
+      panning = false;
+      removeEventListener('mousemove', onPanMove);
+    };
+    const onMouseDown = (e) => {
+      if (e.target === wrapper || e.target === inner) {
+        panning = true;
+        panStart = { x: e.clientX - this._pan.x, y: e.clientY - this._pan.y };
+        addEventListener('mousemove', onPanMove);
+        addEventListener('mouseup', onPanEnd, { once: true });
+      }
+    };
+    wrapper.addEventListener('wheel', onWheel, { passive: false });
+    wrapper.addEventListener('mousedown', onMouseDown);
+    this._pz = { enabled: true, wrapper, inner, onWheel, onMouseDown };
+    this._applyTransform(inner);
+  }
+
+  disablePanZoom(){
+    if (!this._pz || !this._pz.enabled) return;
+    const { wrapper, onWheel, onMouseDown } = this._pz;
+    if (wrapper && onWheel) wrapper.removeEventListener('wheel', onWheel);
+    if (wrapper && onMouseDown) wrapper.removeEventListener('mousedown', onMouseDown);
+    this._pz = { enabled: false };
+  }
+
+  _applyTransform(inner){
+    if (!inner) return;
+    inner.style.transform = `translate(${this._pan.x}px, ${this._pan.y}px) scale(${this._scale})`;
+  }
+
+  getScale(){ return this._scale; }
+  getPan(){ return { ...this._pan }; }
+  setScale(v, inner){ this._scale = Math.max(0.1, Math.min(10, Number(v) || 1)); this._applyTransform(inner || (this._pz && this._pz.inner)); }
+  setPan(p, inner){ this._pan = { x: Number(p.x)||0, y: Number(p.y)||0 }; this._applyTransform(inner || (this._pz && this._pz.inner)); }
+
   renderConnections(svg, canvasInner, nodes) {
     while (svg.firstChild) svg.removeChild(svg.firstChild);
     svg.setAttribute('width', canvasInner.style.width || '2000px');
@@ -234,6 +467,7 @@ class NodeUI {
       const el = this.buildNodeElement(n, {
         onOpenConfig: n.openConfig,
         onOpenEdit:   n.openEdit,
+        onOpenHelp:   n.openHelp,
         onEnableChange: n.onChangeCheckbox,
         connectingFromId,
         connectChecked: connectingFromId === n.id || (Array.isArray(n.connections) && n.connections.length > 0),
@@ -248,29 +482,40 @@ class NodeUI {
     });
   }
 
-  // Handle connect mode via option click
-  handleOptionClick(nodes, id, state, svg, canvasInner, rerender){
-    const isMap = nodes && typeof nodes.get === 'function';
-    const getById = (nid) => isMap ? nodes.get(nid) : (Array.isArray(nodes) ? nodes.find(x => x.id === nid) : null);
-    if (!state.connectingFrom) {
-      state.connectingFrom = id;
-      if (typeof rerender === 'function') rerender();
-      return;
-    }
-    if (state.connectingFrom && id !== state.connectingFrom) {
-      const from = getById(state.connectingFrom);
-      if (from) { from.connections = [id]; from.lastTarget = id; }
-      state.connectingFrom = null;
-      this.renderConnections(svg, canvasInner, nodes);
-      if (typeof rerender === 'function') rerender();
-      return;
-    }
-    if (state.connectingFrom && id === state.connectingFrom) {
-      state.connectingFrom = null;
-      if (typeof rerender === 'function') rerender();
+  // (handleOptionClick removed; connections are managed by train only)
+
+  // Apply connections strictly from the stored train and current enabled/disabled state.
+  _applyConnectionsFromTrain() {
+    if (!this._ctx || !Array.isArray(this._ctx.train)) return;
+    const nodesRef = this._ctx.nodes;
+    if (!nodesRef) return;
+    const isMap = nodesRef && typeof nodesRef.get === 'function';
+    const getById = (id) => isMap ? nodesRef.get(id) : (Array.isArray(nodesRef) ? nodesRef.find(x => x && x.id === id) : null);
+    const list = isMap ? Array.from(nodesRef.values()) : (Array.isArray(nodesRef) ? nodesRef : []);
+    // Clear all connections
+    list.forEach(n => { if (n) n.connections = []; });
+    const t = this._ctx.train;
+    for (let i = 0; i < t.length; i++) {
+      const aId = t[i];
+      const a = getById(aId);
+      if (!a || a.state === 'disabled') continue;
+      // find next enabled in train
+      let target = null;
+      for (let j = i + 1; j < t.length; j++) {
+        const b = getById(t[j]);
+        if (b && b.state !== 'disabled') { target = b.id; break; }
+      }
+      if (target) a.connections = [target]; else a.connections = [];
     }
   }
 
+  // Re-apply a new train and refresh
+  applyTrain(chain, { refresh = true } = {}) {
+    if (!this._ctx) return;
+    if (Array.isArray(chain)) this._ctx.train = chain.slice();
+    this._applyConnectionsFromTrain();
+    if (refresh) this.refresh(this._getRenderOptions ? this._getRenderOptions() : undefined);
+  }
   // (connect toggle handler removed; not used in current UI)
 
   // Convenience: render nodes and connections together
@@ -279,12 +524,17 @@ class NodeUI {
     this.renderConnections(svg, canvasInner, nodes);
   }
 
+  // (renderConnectionsAuto removed; not used by current app)
+
   // Produce default render options wired for drag/position with provided event logger
   defaultRenderOptions(state, svg, canvasInner, nodes, recordNodeEvent) {
     return {
       connectingFromId: state && state.connectingFrom,
-      getScale: () => (state && typeof state.scale === 'number' ? state.scale : 1),
-      onPositionChange: (nodeObj) => { if (recordNodeEvent) recordNodeEvent(nodeObj.id, 'position-change', { position: { ...nodeObj.position } }); this.renderConnections(svg, canvasInner, nodes); },
+      getScale: () => (state && typeof state.scale === 'number' ? state.scale : (typeof this.getScale === 'function' ? this.getScale() : 1)),
+      onPositionChange: (nodeObj) => {
+        if (recordNodeEvent) recordNodeEvent(nodeObj.id, 'position-change', { position: { ...nodeObj.position } });
+        this.renderConnections(svg, canvasInner, nodes);
+      },
       onDragStart:      (nodeObj) => { if (recordNodeEvent) recordNodeEvent(nodeObj.id, 'drag-start', { position: { ...nodeObj.position } }); },
       onDragEnd:        (nodeObj) => { if (recordNodeEvent) recordNodeEvent(nodeObj.id, 'drag-end',   { position: { ...nodeObj.position } }); },
       controls: { enableToggle: { visible: true }, connectToggle: { visible: false }, editButton: { visible: true }, helpButton: { visible: true } },
@@ -292,16 +542,8 @@ class NodeUI {
   }
 }
 
+
+
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
 
-// Centralized icon set for NodeUI controls
-NodeUI.ICONS = {
-  edit: `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1.003 1.003 0 0 0 0-1.42l-2.34-2.34a1.003 1.003 0 0 0-1.42 0l-1.83 1.83 3.75 3.75 1.84-1.82z"/></svg>`,
-  help: `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 17h-2v-2h2v2zm2.07-7.75-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26a2 2 0 1 0-3.41-1.41H8a4 4 0 1 1 7.07 2.25z"/></svg>`,
-  check: `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>`,
-  warn: `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>`,
-  dot:  `<svg viewBox="0 0 24 24" width="10" height="10" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor"/></svg>`,
-};
 
-// Expose on window for classic usage
-window.NodeUI = NodeUI;

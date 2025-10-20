@@ -1,4 +1,18 @@
-/* Default node style derived from test.md */
+/* Node container positioning */
+.node-js {
+  position: absolute;
+}
+
+/* Disabled node visual state */
+.node-js.disabled .option-js {
+  background-color: #D6E4F0;
+  border-color: #A9CBE8;
+  color: #607d8b;
+  opacity: 0.9;
+  cursor: default;
+}
+
+/* Node pill */
 .option-js {
   display: flex;
   align-items: center;
@@ -22,10 +36,16 @@
   outline: none;
 }
 
-/* Keep icon size consistent */
-.option-js .state-icon { width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; }
+/* Icon slot */
+.option-js .state-icon {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 
-/* Label maps to .node__label in test.md */
+/* Label and tag */
 .option-js .label {
   flex: 1 1 auto;
   font-weight: 400;
@@ -33,17 +53,19 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.option-js .label .tag { font-weight: 600; opacity: 0.9; margin-left: 4px; }
+.option-js .label .tag {
+  font-weight: 600;
+  opacity: 0.9;
+  margin-left: 4px;
+}
 
-/* Tools area maps to .node__tools */
+/* Actions */
 .option-js .actions {
   margin-left: auto;
   display: flex;
   gap: 6px;
   opacity: 0.9;
 }
-
-/* Individual tool maps to .node__tool */
 .option-js .actions .mini-btn {
   width: 14px;
   height: 14px;
@@ -55,15 +77,21 @@
   padding: 0;
 }
 
-/* Enable checkbox look & feel */
+/* Toggles */
 .option-js .enable-toggle { display: inline-flex; align-items: center; }
 .option-js .enable-toggle input { width: 16px; height: 16px; accent-color: #1e5ea8; cursor: pointer; }
-
-/* Connect toggle remains hidden by config in JS, keep neutral style */
 .option-js .connect-toggle { display: inline-flex; align-items: center; margin-right: 4px; }
 .option-js .connect-toggle input { width: 16px; height: 16px; accent-color: #1e5ea8; cursor: pointer; }
 
-/* Warning badge retained */
+/* Warning badge */
 .option-js .warning-badge {
-  position: absolute; right: -4px; top: -4px; width: 10px; height: 10px; background: #E02424; border-radius: 999px; border: 2px solid #ffffff;
+  position: absolute;
+  right: -4px;
+  top: -4px;
+  width: 10px;
+  height: 10px;
+  background: #E02424;
+  border-radius: 999px;
+  border: 2px solid #ffffff;
 }
+

@@ -1,12 +1,12 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="de">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Node Editor</title>
-    <link rel="stylesheet" href="styles.css">
-    <link rel="stylesheet" href="node.css">
-    <link rel="stylesheet" href="option.css">
+    <link rel="stylesheet" href="index.css">
+    <link rel="stylesheet" href="nodes.css">
+    
   </head>
   <body>
     <!-- Header -->
@@ -25,15 +25,8 @@
       </div>
     </header>
 
-    <!-- Canvas Area -->
-    <main class="canvas-container">
-      <div id="canvasWrapper" class="canvas-wrapper">
-        <div id="canvasInner" class="canvas-inner" style="width: 2000px; height: 1200px;">
-          <svg id="connections" class="connections-layer" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg>
-          <div id="nodesLayer" class="nodes-layer"></div>
-        </div>
-      </div>
-    </main>
+    <!-- Canvas Area (created dynamically by NodeUI.ensureCanvas) -->
+    <div class="canvas-container"></div>
 
     <!-- Modal -->
     <div id="modal" class="modal" aria-hidden="true" role="dialog" aria-modal="true">
@@ -41,21 +34,24 @@
       <section class="modal-content">
         <header class="modal-header">
           <div id="modalTitle" class="modal-title">Dialog</div>
-          <button class="icon-btn" data-modal-close aria-label="SchlieÃŸen">
+          <button class="icon-btn" data-modal-close aria-label="Schließen">
             <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M18.3 5.71 12 12l6.3 6.29-1.41 1.41L10.59 13.4 4.3 19.7 2.89 18.29 9.17 12 2.89 5.71 4.3 4.3l6.29 6.29 6.29-6.29z"/></svg>
           </button>
         </header>
         <div id="modalBody" class="modal-body"></div>
         <footer class="modal-footer">
-          <button class="btn" data-modal-close>SchlieÃŸen</button>
+          <button class="btn" data-modal-close>Schließen</button>
         </footer>
       </section>
     </div>
 
-    <!-- Classic script for file:// compatibility -->
+    <!-- Classic scripts to support file:// and simple servers -->
     <script defer src="node.js"></script>
+    <script defer src="runsimlaiton_funktin.js"></script>
+    <script defer src="savedesing_funktin.js"></script>
     <script defer src="script.js"></script>
 
   </body>
   </html>
+
 

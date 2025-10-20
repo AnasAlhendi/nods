@@ -60,7 +60,6 @@ body {
 .canvas-inner {
   position: relative;
   transform-origin: 0 0;
-  /* Subtle 40px grid background */
   background-image:
     linear-gradient(to right, rgba(0,0,0,0.04) 1px, transparent 1px),
     linear-gradient(to bottom, rgba(0,0,0,0.04) 1px, transparent 1px);
@@ -74,10 +73,6 @@ body {
 .connections-layer { pointer-events: none; }
 .nodes-layer { pointer-events: auto; }
 
-/* Panels removed */
-
-/* Nodes moved to node.css and option.css */
-
 /* Modal */
 .modal { position: fixed; inset: 0; display: none; }
 .modal[aria-hidden="false"] { display: block; }
@@ -90,19 +85,16 @@ body {
 .btn { background: var(--blue-900); color: var(--white); border: none; border-radius: 6px; height: 32px; padding: 0 12px; cursor: pointer; }
 .btn:hover { background: var(--blue-800); }
 
- 
-
 /* Utility */
 .muted { opacity: 0.75; }
 
-/* Nodes-only view: hide everything except nodes (scoped) */
+/* Nodes-only view helpers */
 .nodes-only .header-bar { display: none !important; }
 .nodes-only #eventsPanel { display: none !important; }
 .nodes-only .panels-layer { display: none !important; }
 .nodes-only .connections-layer { display: none !important; }
 .nodes-only #modal { display: none !important; }
-/* Fill screen since header is hidden */
 .nodes-only .canvas-container { height: 100% !important; }
-/* Hide node controls so only the node pill remains */
 .nodes-only .option-js .connect-toggle { display: none !important; }
 .nodes-only .option-js .actions { display: none !important; }
+
