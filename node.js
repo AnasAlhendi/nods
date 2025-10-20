@@ -44,7 +44,7 @@ class NodeUI {
       iconWrap.className = 'state-icon';
       const iconStr = String(n.icon).trim();
       if (iconStr.startsWith('<svg')) { iconWrap.innerHTML = iconStr; }
-      else if (/ ^https?: \\/\\//i.test(iconStr) || /\\.(png|jpe?g|gif|svg) $/i.test(iconStr)) { 
+      else if (/^https?:\/\//i.test(iconStr) || /\.(png|jpe?g|gif|svg)$/i.test(iconStr)) {
         const img = document.createElement('img'); img.src = iconStr; img.alt = ''; img.width = 18; img.height = 18; img.decoding = 'async';
         iconWrap.appendChild(img);
       } else { iconWrap.textContent = iconStr; }
@@ -58,7 +58,8 @@ class NodeUI {
 
     // Controls configuration (visibility/disabled)
     const enableCfg = Object.assign({ visible: true, disabled: false }, controls.enableToggle || {});
-    const connectCfg = Object.assign({ visible: true, disabled: false }, controls.connectToggle || {});
+    // Only one checkbox per node: hide connect toggle by default
+    const connectCfg = Object.assign({ visible: false, disabled: false }, controls.connectToggle || {});
     const editCfg = Object.assign({ visible: true, disabled: false }, controls.editButton || {});
     const helpCfg = Object.assign({ visible: true, disabled: false }, controls.helpButton || {});
 
@@ -122,7 +123,6 @@ class NodeUI {
     if (enable) option.appendChild(enable);
     if (connect) option.appendChild(connect);
     if (iconWrap) option.appendChild(iconWrap);
-    if (iconWrap) option.appendChild(iconWrap);
     option.appendChild(label);
     if (btnEdit) actions.appendChild(btnEdit);
     if (btnHelp) actions.appendChild(btnHelp);
@@ -185,8 +185,110 @@ class NodeUI {
     return container;
   }
 
-  optionSelector(id) {
-    return document.querySelector(`[data-node-id="${id}"] .option-js`);
+  renderConnections(svg, canvasInner, nodes) {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    svg.setAttribute('width', canvasInner.style.width || '2000px');
+    svg.setAttribute('height', canvasInner.style.height || '1200px');
+    svg.setAttribute('viewBox', `0 0 ${parseInt(canvasInner.style.width||2000)} ${parseInt(canvasInner.style.height||1200)}`);
+    const isMap = nodes && typeof nodes.get === 'function';
+    const getById = (id) => isMap ? nodes.get(id) : (Array.isArray(nodes) ? nodes.find(x => x.id === id) : null);
+    const list = isMap ? Array.from(nodes.values()) : (Array.isArray(nodes) ? nodes : []);
+    list.forEach(n => {
+      (n.connections || []).forEach(targetId => {
+        const t = getById(targetId); if (!t) return;
+        const a = this._nodeAnchor(n.id); const b = this._nodeAnchor(t.id);
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', this._bezierPath(a, b));
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', 'var(--blue-600)');
+        path.setAttribute('stroke-width', '2');
+        path.setAttribute('marker-end', 'url(#arrow)');
+        path.addEventListener('mouseenter', () => path.setAttribute('stroke', '#2563EB'));
+        path.addEventListener('mouseleave', () => path.setAttribute('stroke', 'var(--blue-600)'));
+        svg.appendChild(path);
+      });
+    });
+    this._ensureArrowMarker(svg);
+  }
+
+  _ensureArrowMarker(svg){ let defs=svg.querySelector('defs'); if(!defs){ defs=document.createElementNS('http://www.w3.org/2000/svg','defs'); svg.prepend(defs);} let marker=svg.querySelector('#arrow'); if(!marker){ marker=document.createElementNS('http://www.w3.org/2000/svg','marker'); marker.setAttribute('id','arrow'); marker.setAttribute('markerWidth','10'); marker.setAttribute('markerHeight','7'); marker.setAttribute('refX','9'); marker.setAttribute('refY','3.5'); marker.setAttribute('orient','auto'); const poly=document.createElementNS('http://www.w3.org/2000/svg','polygon'); poly.setAttribute('points','0 0, 10 3.5, 0 7'); poly.setAttribute('fill','var(--blue-600)'); marker.appendChild(poly); defs.appendChild(marker);} }
+
+  _nodeAnchor(id){ const el=document.querySelector(`[data-node-id="${id}"]`); if(!el) return {x:0,y:0}; const x=parseFloat(el.style.left)+el.offsetWidth/2; const y=parseFloat(el.style.top)+el.offsetHeight/2; return {x,y}; }
+
+  _bezierPath(a,b){ const dx=Math.max(60, Math.abs(b.x-a.x)*0.4); const c1={x:a.x+dx,y:a.y}; const c2={x:b.x-dx,y:b.y}; return `M ${a.x} ${a.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${b.x} ${b.y}`; }
+  // (optionSelector removed; not used)
+
+  // Render a list of nodes (Map or Array) into a container
+  renderNodes(container, nodes, {
+    connectingFromId,
+    getScale,
+    onPositionChange,
+    onDragStart,
+    onDragEnd,
+    controls = { enableToggle: { visible: true }, connectToggle: { visible: false }, editButton: { visible: true }, helpButton: { visible: true } },
+  } = {}) {
+    while (container.firstChild) container.removeChild(container.firstChild);
+    const isMap = nodes && typeof nodes.get === 'function';
+    const list = isMap ? Array.from(nodes.values()) : (Array.isArray(nodes) ? nodes : []);
+    list.forEach(n => {
+      const el = this.buildNodeElement(n, {
+        onOpenConfig: n.openConfig,
+        onOpenEdit:   n.openEdit,
+        onEnableChange: n.onChangeCheckbox,
+        connectingFromId,
+        connectChecked: connectingFromId === n.id || (Array.isArray(n.connections) && n.connections.length > 0),
+        dragEnabled: true,
+        getScale,
+        onPositionChange,
+        onDragStart,
+        onDragEnd,
+        controls,
+      });
+      container.appendChild(el);
+    });
+  }
+
+  // Handle connect mode via option click
+  handleOptionClick(nodes, id, state, svg, canvasInner, rerender){
+    const isMap = nodes && typeof nodes.get === 'function';
+    const getById = (nid) => isMap ? nodes.get(nid) : (Array.isArray(nodes) ? nodes.find(x => x.id === nid) : null);
+    if (!state.connectingFrom) {
+      state.connectingFrom = id;
+      if (typeof rerender === 'function') rerender();
+      return;
+    }
+    if (state.connectingFrom && id !== state.connectingFrom) {
+      const from = getById(state.connectingFrom);
+      if (from) { from.connections = [id]; from.lastTarget = id; }
+      state.connectingFrom = null;
+      this.renderConnections(svg, canvasInner, nodes);
+      if (typeof rerender === 'function') rerender();
+      return;
+    }
+    if (state.connectingFrom && id === state.connectingFrom) {
+      state.connectingFrom = null;
+      if (typeof rerender === 'function') rerender();
+    }
+  }
+
+  // (connect toggle handler removed; not used in current UI)
+
+  // Convenience: render nodes and connections together
+  rerender(container, svg, canvasInner, nodes, options = {}) {
+    this.renderNodes(container, nodes, options);
+    this.renderConnections(svg, canvasInner, nodes);
+  }
+
+  // Produce default render options wired for drag/position with provided event logger
+  defaultRenderOptions(state, svg, canvasInner, nodes, recordNodeEvent) {
+    return {
+      connectingFromId: state && state.connectingFrom,
+      getScale: () => (state && typeof state.scale === 'number' ? state.scale : 1),
+      onPositionChange: (nodeObj) => { if (recordNodeEvent) recordNodeEvent(nodeObj.id, 'position-change', { position: { ...nodeObj.position } }); this.renderConnections(svg, canvasInner, nodes); },
+      onDragStart:      (nodeObj) => { if (recordNodeEvent) recordNodeEvent(nodeObj.id, 'drag-start', { position: { ...nodeObj.position } }); },
+      onDragEnd:        (nodeObj) => { if (recordNodeEvent) recordNodeEvent(nodeObj.id, 'drag-end',   { position: { ...nodeObj.position } }); },
+      controls: { enableToggle: { visible: true }, connectToggle: { visible: false }, editButton: { visible: true }, helpButton: { visible: true } },
+    };
   }
 }
 
