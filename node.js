@@ -59,7 +59,10 @@ class NodeUI {
       iconWrap = document.createElement('span');
       iconWrap.className = 'state-icon';
       const iconStr = String(n.icon).trim();
-      if (iconStr.startsWith('<svg')) { iconWrap.innerHTML = iconStr; }
+      if (iconStr.startsWith('<svg')) {
+        const safe = this._safeSvg(iconStr);
+        if (safe) iconWrap.innerHTML = safe;
+      }
       else if (/^https?:\/\//i.test(iconStr) || /\.(png|jpe?g|gif|svg)$/i.test(iconStr)) {
         const img = document.createElement('img'); img.src = iconStr; img.alt = ''; img.width = 18; img.height = 18; img.decoding = 'async';
         iconWrap.appendChild(img);
@@ -343,7 +346,8 @@ class NodeUI {
       svg,
       inner,
       this._ctx ? this._ctx.nodes : nodes,
-      recordEvent
+      recordEvent,
+      option.dragEnabled !== false // default true unless explicitly false
     );
     // store context for future auto-renders
     this._ctx = { wrapper, inner, svg, nodesLayer, nodes, state: option.state || null, train: parsedTrain };
@@ -458,12 +462,19 @@ class NodeUI {
     onPositionChange,
     onDragStart,
     onDragEnd,
+    dragEnabled = true,
     controls = { enableToggle: { visible: true }, connectToggle: { visible: false }, editButton: { visible: true }, helpButton: { visible: true } },
   } = {}) {
     while (container.firstChild) container.removeChild(container.firstChild);
     const isMap = nodes && typeof nodes.get === 'function';
     const list = isMap ? Array.from(nodes.values()) : (Array.isArray(nodes) ? nodes : []);
-    list.forEach(n => {
+    
+    // 1) ارسم المجموعات (خلفية)
+    const groups = list.filter(n => n && n.type === 'group');
+    groups.forEach(g => this._renderGroup(container, g));
+
+    // 2) ارسم باقي العقد فوقها
+    list.filter(n => n && n.type !== 'group').forEach(n => {
       const el = this.buildNodeElement(n, {
         onOpenConfig: n.openConfig,
         onOpenEdit:   n.openEdit,
@@ -471,7 +482,7 @@ class NodeUI {
         onEnableChange: n.onChangeCheckbox,
         connectingFromId,
         connectChecked: connectingFromId === n.id || (Array.isArray(n.connections) && n.connections.length > 0),
-        dragEnabled: true,
+        dragEnabled: dragEnabled,
         getScale,
         onPositionChange,
         onDragStart,
@@ -520,14 +531,14 @@ class NodeUI {
 
   // Convenience: render nodes and connections together
   rerender(container, svg, canvasInner, nodes, options = {}) {
-    this.renderNodes(container, nodes, options);
+     this.renderNodes(container, nodes, options);
     this.renderConnections(svg, canvasInner, nodes);
   }
 
   // (renderConnectionsAuto removed; not used by current app)
 
   // Produce default render options wired for drag/position with provided event logger
-  defaultRenderOptions(state, svg, canvasInner, nodes, recordNodeEvent) {
+  defaultRenderOptions(state, svg, canvasInner, nodes, recordNodeEvent, dragEnabled = true) {
     return {
       connectingFromId: state && state.connectingFrom,
       getScale: () => (state && typeof state.scale === 'number' ? state.scale : (typeof this.getScale === 'function' ? this.getScale() : 1)),
@@ -537,13 +548,111 @@ class NodeUI {
       },
       onDragStart:      (nodeObj) => { if (recordNodeEvent) recordNodeEvent(nodeObj.id, 'drag-start', { position: { ...nodeObj.position } }); },
       onDragEnd:        (nodeObj) => { if (recordNodeEvent) recordNodeEvent(nodeObj.id, 'drag-end',   { position: { ...nodeObj.position } }); },
+      dragEnabled: dragEnabled,
       controls: { enableToggle: { visible: true }, connectToggle: { visible: false }, editButton: { visible: true }, helpButton: { visible: true } },
     };
+  }
+  // Safe SVG validation method
+  _safeSvg(svgStr){
+    try{
+      const doc = new DOMParser().parseFromString(svgStr, 'image/svg+xml');
+      const svg = doc.querySelector('svg'); if(!svg) return null;
+      svg.querySelectorAll('script, foreignObject').forEach(n=>n.remove());
+      [...svg.querySelectorAll('*')].forEach(el=>{
+        [...el.attributes].forEach(a=>{
+          const n = a.name.toLowerCase(), v = a.value;
+          if (n.startsWith('on') || /url\(/i.test(v)) el.removeAttribute(a.name);
+        });
+      });
+      return svg.outerHTML;
+    } catch(e){ return null; }
+  }
+
+  // Render a group container
+  _renderGroup(container, n){
+    const box = document.createElement('div');
+    box.className = 'group-box';
+    if (n.groupKind) box.classList.add(n.groupKind); // auswahl|menubaum|buchung|terminanmeldung|abschluss|sonstiges
+    if (n.state === 'warning') box.classList.add('warning');
+
+    box.style.left   = (n.position.x) + 'px';
+    box.style.top    = (n.position.y) + 'px';
+    box.style.width  = ((n.size?.w) || 300) + 'px';
+    box.style.height = ((n.size?.h) || 200) + 'px';
+    box.dataset.groupId = n.id;
+
+    box.innerHTML = `
+      <div class="group-header">${escapeHtml(n.label || '')}</div>
+      <div class="group-body"></div>
+    `;
+
+    // سحب المجموعة يحرك عناصرها المنتمية (groupId) أو التي تقع داخلها
+    box.addEventListener('mousedown', (e)=>{
+      if (e.button !== 0) return;
+      const start = { x: e.clientX, y: e.clientY };
+      const orig = { x: parseFloat(box.style.left), y: parseFloat(box.style.top) };
+
+      const nodesRef = this._ctx?.nodes;
+      const isMap = nodesRef && typeof nodesRef.get === 'function';
+      const list = isMap ? Array.from(nodesRef.values()) : (Array.isArray(nodesRef) ? nodesRef : []);
+
+      // أعضاء فعليين: حسب groupId أو داخل حدود الصندوق
+      const groupNode = list.find(n => n?.id === box.dataset.groupId);
+      const children = list.filter(n => n && n.type !== 'group' &&
+          (n.groupId === groupNode.id || this._isInsideGroup(n, groupNode)));
+      
+      // حفظ المواقع الأصلية للأطفال
+      const originalPositions = children.map(c => ({
+        id: c.id,
+        x: c.position.x,
+        y: c.position.y
+      }));
+
+      const onMove = (ev)=>{
+        const scale = this.getScale?.() || 1;
+        const dx = (ev.clientX - start.x) / scale;
+        const dy = (ev.clientY - start.y) / scale;
+        const nx = Math.round(orig.x + dx), ny = Math.round(orig.y + dy);
+        box.style.left = nx + 'px'; box.style.top = ny + 'px';
+        groupNode.position.x = nx; groupNode.position.y = ny;
+
+        // حرّك الأطفال بنفس الإزاحة من مواقعهم الأصلية
+        children.forEach(c=>{
+          const original = originalPositions.find(p => p.id === c.id);
+          if (original) {
+            c.position.x = Math.round(original.x + dx);
+            c.position.y = Math.round(original.y + dy);
+            const el = this._ctx?.wrapper?.querySelector(`[data-node-id="${c.id}"]`);
+            if (el){
+              el.style.left = c.position.x + 'px';
+              el.style.top = c.position.y + 'px';
+            }
+          }
+        });
+
+        this.renderConnections(this._ctx.svg, this._ctx.inner, this._ctx.nodes);
+      };
+      const onUp = ()=>{ document.removeEventListener('mousemove', onMove); };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp, { once:true });
+    });
+
+    container.appendChild(box);
+    return box;
+  }
+
+  // Check if a node is inside a group bounds
+  _isInsideGroup(node, group){
+    const gx = group.position.x, gy = group.position.y;
+    const gw = group.size?.w || 300, gh = group.size?.h || 200;
+    const nx = node.position.x, ny = node.position.y;
+    return nx >= gx && nx <= gx+gw && ny >= gy && ny <= gy+gh;
   }
 }
 
 
 
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+
 
 

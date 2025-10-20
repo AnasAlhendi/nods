@@ -95,3 +95,90 @@
   border: 2px solid #ffffff;
 }
 
+
+/* طبقات */
+.canvas-inner { position: relative; }
+.nodes-layer  { position: absolute; inset: 0; }
+.group-box    { position: absolute; z-index: 1; }
+.node-js      { position: absolute; z-index: 2; }  /* العقد فوق المجموعات */
+
+/* القاعدة العامة للمجموعة */
+.group-box {
+  border: 2px solid #9ca3af;           /* gray-400 */
+  border-radius: 10px;
+  background: #f9fafb;                 /* gray-50 */
+  box-shadow: inset 0 0 0 1px #e5e7eb; /* gray-200 */
+  overflow: visible;
+}
+
+.group-box .group-header {
+  height: 28px;
+  line-height: 28px;
+  padding: 0 10px;
+  font-weight: 600;
+  font-size: 14px;
+  color: #111827;                      /* gray-900 */
+  background: #e5e7eb;                 /* gray-200 */
+  border-bottom: 1px solid #d1d5db;    /* gray-300 */
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+  user-select: none;
+}
+
+.group-box .group-body {
+  position: relative;
+  padding: 8px 8px 10px 8px;
+}
+
+/* حالة تحذير (!!) */
+.group-box.warning {
+  border-color: #f87171;               /* red-400 */
+  box-shadow: 0 0 0 2px rgba(248,113,113,.25);
+}
+.group-box.warning .group-header {
+  background: #fee2e2;                 /* red-100 */
+  color: #b91c1c;                       /* red-700 */
+}
+
+/* تنويعات حسب النوع (ألوان قريبة من الصورة) */
+.group-box.auswahl .group-header { background:#e5e7eb; font-weight:700; }
+.group-box.auswahl { background:#f3f4f6; border-color:#9ca3af; }
+
+.group-box.menubaum { background:#e5e7eb; border-color:#6b7280; }
+.group-box.menubaum .group-header { background:#d1d5db; color:#1f2937; font-weight:700; }
+
+.group-box.buchung,
+.group-box.terminanmeldung,
+.group-box.abschluss,
+.group-box.sonstiges {
+  background:#f9fafb;
+  border-color:#9ca3af;
+}
+.group-box.buchung .group-header,
+.group-box.terminanmeldung .group-header,
+.group-box.abschluss .group-header,
+.group-box.sonstiges .group-header {
+  background:#f3f4f6;
+  color:#1f2937;
+}
+
+/* تنويعات للمجموعات الفرعية */
+.group-box.terminbuchung,
+.group-box.ticket,
+.group-box.anmeldung {
+  background:#f9fafb;
+  border-color:#9ca3af;
+}
+.group-box.terminbuchung .group-header,
+.group-box.ticket .group-header,
+.group-box.anmeldung .group-header {
+  background:#f3f4f6;
+  color:#1f2937;
+}
+
+/* تلميع لعقدة داخل مجموعة */
+.node-js .option-js {
+  /* هذه موجودة عندك؛ إن أردت مزيد من الاتساق داخل المجموعات */
+  /* مثال: */
+  /* background:#fff; border:1px solid #cfe0ff; */
+}
