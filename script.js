@@ -18,6 +18,11 @@ const connectGraph = {
   // السؤال الرئيسي
   habenSieTermin: {
     question: true,
+    inputPointer: 'top',
+    // Control branch output ports (new names)
+    jaOutputPointer: 'right',
+    neinOutputPointer: 'left',
+    // also supports: outputPointers: { ja:'right', nein:'left' }
     branch: {
       ja: "wartennummer",
       nein: "dienst"
@@ -27,20 +32,35 @@ const connectGraph = {
   // فرع عنده موعد (ja)
   wartennummer: {
     question: true,
+    inputPointer: 'top',
+    jaOutputPointer: 'right',
+    neinOutputPointer: 'bottom',
     branch: {
       ja: "zusammenfassungAnmeldung",  // معه رقم انتظار
       nein: "geburtsdatum"             // ما معه رقم → نسأله تاريخ الميلاد
     }
   },
-  geburtsdatum: { next: "zusammenfassungAnmeldung" },
+  geburtsdatum: {
+    next: "zusammenfassungAnmeldung",
+    inputPointer: 'top',
+    nextOutputPointer: 'right'
+  },
   zusammenfassungAnmeldung: { next: "abschlussAnmeldung" },
   abschlussAnmeldung: { end: true },
 
   // فرع ما عنده موعد (nein)
-  dienst: { next: "terminOpt" },
+  dienst: {
+    next: "terminOpt",
+    inputPointer: 'top'
+  },
 
   terminOpt: {
     question: true,
+    inputPointer: 'top',
+    // When disabled, follow this branch by default
+    skipBranch: 'nein',
+    // Optional output pointer preference
+    neinOutputPointer: 'right',
     branch: {
       ja: "zusammenfassungTermin",
       nein: "zusammenfassungTicket"
@@ -75,13 +95,7 @@ const nodes = [
   { id:'g-sonstiges-sub', type:'group', groupKind:'sonstiges', label:'Sonstiges',
     position:{x:40,y:740}, size:{w:940,h:120}, state:'enabled', groupId:'g-menubaum' },
 
-  // Sub-groups (inside Abschluss)
-  { id:'g-terminbuchung-sub', type:'group', groupKind:'terminbuchung', label:'Terminbuchung',
-    position:{x:60,y:410}, size:{w:280,h:120}, state:'enabled', groupId:'g-abschluss-sub' },
-  { id:'g-ticket-sub', type:'group', groupKind:'ticket', label:'Ticket',
-    position:{x:360,y:410}, size:{w:280,h:120}, state:'enabled', groupId:'g-abschluss-sub' },
-  { id:'g-anmeldung-sub', type:'group', groupKind:'anmeldung', label:'Anmeldung',
-    position:{x:660,y:410}, size:{w:280,h:120}, state:'enabled', groupId:'g-abschluss-sub' },
+  // Sub-groups (inside Abschluss) removed: tasks remain directly in 'g-abschluss-sub'
 
   // ===== Vorauswahl =====
   { id:'start', label:'Sprachauswahl', tag:'(Start)', state:'enabled',
@@ -97,14 +111,21 @@ const nodes = [
   // ===== Buchung =====
   { id:'dienst', label:'Dienstleistungserfassung', state:'enabled',
     position:{x:80,y:250}, groupId:'g-buchung-sub', connections:['terminOpt'],
+    inputPointer: 'top',
+    checkbox: false,
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
   { id:'terminOpt', label:'Option Terminbuchung', state:'enabled', question:true,
     position:{x:80,y:300}, groupId:'g-buchung-sub',
+    inputPointer: 'top',
+    checkbox: true,
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
 
   // ===== Terminanmeldung =====
   { id:'wartennummer', label:'Anmeldung per Wartennummer', state:'enabled', question:true,
     position:{x:560,y:250}, groupId:'g-terminanmeldung-sub',
+    inputPointer: 'top',
+    jaOutputPointer: 'right',
+    neinOutputPointer: 'bottom',
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
   // سؤال رئيسي موضوعه وسط الـMenübaum (كما بالصورة)
   { id:'habenSieTermin', label:'Haben Sie für heute einen Termin?', state:'enabled', question:true,
@@ -113,30 +134,32 @@ const nodes = [
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
   { id:'geburtsdatum', label:'Anmeldung per Geburtsdatum', state:'enabled',
     position:{x:560,y:300}, groupId:'g-terminanmeldung-sub',
+    inputPointer: 'top',
+    nextOutputPointer: 'right',
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
 
   // ===== Abschluss → Terminbuchung =====
   { id:'zusammenfassungTermin', label:'Zusammenfassung Terminbuchung', state:'enabled',
-    position:{x:100,y:450}, groupId:'g-terminbuchung-sub', connections:['abschlussTermin'],
+    position:{x:100,y:450}, groupId:'g-abschluss-sub', connections:['abschlussTermin'],
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
   { id:'abschlussTermin', label:'Abschluss Terminbuchung', state:'enabled',
-    position:{x:100,y:490}, groupId:'g-terminbuchung-sub',
+    position:{x:100,y:490}, groupId:'g-abschluss-sub',
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
 
   // ===== Abschluss → Ticket =====
   { id:'zusammenfassungTicket', label:'Zusammenfassung Ticket', state:'enabled',
-    position:{x:400,y:450}, groupId:'g-ticket-sub', connections:['abschlussTicket'],
+    position:{x:400,y:450}, groupId:'g-abschluss-sub', connections:['abschlussTicket'],
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
   { id:'abschlussTicket', label:'Abschluss Ticket', state:'enabled',
-    position:{x:400,y:490}, groupId:'g-ticket-sub',
+    position:{x:400,y:490}, groupId:'g-abschluss-sub',
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
 
   // ===== Abschluss → Anmeldung =====
   { id:'zusammenfassungAnmeldung', label:'Zusammenfassung Anmeldung', state:'enabled',
-    position:{x:700,y:450}, groupId:'g-anmeldung-sub', connections:['abschlussAnmeldung'],
+    position:{x:700,y:450}, groupId:'g-abschluss-sub', connections:['abschlussAnmeldung'],
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
   { id:'abschlussAnmeldung', label:'Abschluss Anmeldung', state:'enabled',
-    position:{x:700,y:490}, groupId:'g-anmeldung-sub',
+    position:{x:700,y:490}, groupId:'g-abschluss-sub',
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
 
   // ===== Sonstiges =====

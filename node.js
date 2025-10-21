@@ -1,4 +1,4 @@
-﻿// Node UI class: builds node DOM and exposes helpers (ES module)
+// Node UI class: builds node DOM and exposes helpers (ES module)
 
 class NodeUI {
   static ICONS = {
@@ -78,6 +78,7 @@ class NodeUI {
     // Controls configuration (visibility/disabled)
     const enableCfg = Object.assign({ visible: true, disabled: false }, controls.enableToggle || {});
     if (typeof n.checkbox === 'boolean') enableCfg.visible = n.checkbox;
+    else if (n.question === true) enableCfg.visible = false;
     // Only one checkbox per node: hide connect toggle by default
     const connectCfg = Object.assign({ visible: false, disabled: false }, controls.connectToggle || {});
     const editCfg = Object.assign({ visible: true, disabled: false }, controls.editButton || {});
@@ -176,7 +177,7 @@ class NodeUI {
       btnHelp.addEventListener('click', (ev) => { ev.stopPropagation(); onOpenHelp && onOpenHelp(n.id); });
     }
 
-    // Order: enable â€¢ connect â€¢ label â€¢ actions
+    // Order: enable • connect • label • actions
     if (enable) option.appendChild(enable);
     if (connect) option.appendChild(connect);
     if (iconWrap) option.appendChild(iconWrap);
@@ -185,10 +186,22 @@ class NodeUI {
     if (btnHelp) actions.appendChild(btnHelp);
     option.appendChild(actions);
 
+    // Four connection ports at side midpoints (top, right, bottom, left)
+    const mkPort = (side) => {
+      const p = document.createElement('span');
+      p.className = `port port-${side}`;
+      p.setAttribute('aria-hidden', 'true');
+      return p;
+    };
+    option.appendChild(mkPort('top'));
+    option.appendChild(mkPort('right'));
+    option.appendChild(mkPort('bottom'));
+    option.appendChild(mkPort('left'));
+
     if (n.state === 'warning') {
       const badge = document.createElement('span');
       badge.className = 'warning-badge';
-      badge.title = 'UnvollstÃ¤ndige Konfiguration';
+      badge.title = 'Unvollständige Konfiguration';
       option.appendChild(badge);
     }
 
@@ -323,10 +336,7 @@ class NodeUI {
       }
     }
 
-    // Apply graph-based connections if provided
-    if (option.graph && (Array.isArray(nodes) || (nodes && typeof nodes.get === 'function'))) {
-      try { this._applyGraph(option.graph, nodes); } catch(e) { /* ignore */ }
-    }
+    // Defer applying connections until context is initialized
 
     // Parse connection chain (train) if provided
     let parsedTrain = [];
@@ -353,8 +363,9 @@ class NodeUI {
     // store context for future auto-renders
     this._ctx = { wrapper, inner, svg, nodesLayer, nodes, state: option.state || null, train: parsedTrain, graph: (option.graph || null) };
     this._getRenderOptions = makeOptions;
-    // Apply train-derived connections once before first render
-    if (!option.graph) this._applyConnectionsFromTrain();
+    // Apply connections before first render
+    if (option.graph) this._applyGraphWithDisabledSkip();
+    else this._applyConnectionsFromTrain();
     this.rerender(nodesLayer, svg, inner, nodes, makeOptions());
     return { wrapper, inner, svg, nodesLayer };
   }
@@ -433,27 +444,31 @@ class NodeUI {
     const list = isMap ? Array.from(nodes.values()) : (Array.isArray(nodes) ? nodes : []);
     list.forEach(n => {
       (n.connections || []).forEach(conn => {
-        let targetId = null, label = null;
-        if (typeof conn === 'string') targetId = conn;
-        else if (conn && typeof conn === 'object') { targetId = conn.to || conn.id; label = conn.label || null; }
+        let targetId = null, label = null, fromSide = null, toSide = null;
+        if (typeof conn === 'string') {
+          targetId = conn;
+        } else if (conn && typeof conn === 'object') {
+          targetId = conn.to || conn.id;
+          label = conn.label || null;
+          fromSide = conn.fromSide || conn.sourceSide || conn.side || null;
+          toSide = conn.toSide || conn.targetSide || null;
+        }
         const t = getById(targetId); if (!t) return;
-        const a = this._nodeAnchor(n.id); const b = this._nodeAnchor(t.id);
-        this._renderEdge(svg, a, b, label);
+        const aBox = this._nodeBox(n.id); const bBox = this._nodeBox(t.id);
+        this._renderEdge(svg, aBox, bBox, { label, fromSide, toSide });
       });
     });
-    this._ensureArrowMarker(svg);
   }
 
-  _renderEdge(svg, a, b, label){
+  _renderEdge(svg, aBox, bBox, { label = null, fromSide = null, toSide = null } = {}){
     const id = `p${Math.random().toString(36).slice(2)}`;
-    const d = this._bezierPath(a, b);
+    const d = this._orthogonalPath(aBox, bBox, { fromSide, toSide });
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     path.setAttribute('id', id);
     path.setAttribute('d', d);
     path.setAttribute('fill', 'none');
     path.setAttribute('stroke', 'var(--blue-600)');
     path.setAttribute('stroke-width', '2');
-    path.setAttribute('marker-end', 'url(#arrow)');
     svg.appendChild(path);
     const hit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     hit.setAttribute('d', d);
@@ -507,8 +522,132 @@ class NodeUI {
     return { x, y };
   }
 
-  _bezierPath(a, b) {
-    return `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
+  // Node bounding box and center
+  _nodeBox(id) {
+    const el = document.querySelector(`[data-node-id="${id}"]`);
+    if (!el) return { id, x:0, y:0, w:0, h:0, cx:0, cy:0 };
+    const x = parseFloat(el.style.left) || 0;
+    const y = parseFloat(el.style.top) || 0;
+    const w = el.offsetWidth || 120;
+    const h = el.offsetHeight || 36;
+    return { id, x, y, w, h, cx: x + w/2, cy: y + h/2 };
+  }
+
+  // Orthogonal path with short exit/entry segments and rounded corner
+  _orthogonalPath(aBox, bBox, { fromSide = null, toSide = null } = {}) {
+    const dx = bBox.cx - aBox.cx, dy = bBox.cy - aBox.cy;
+    const offset = 24; // exit/entry length
+    let r = 8; // corner radius
+    const abs = Math.abs;
+    const sign = (v) => (v < 0 ? -1 : 1);
+    const sidePoint = (box, side) => {
+      switch (side) {
+        case 'left': return { x: box.x, y: box.cy };
+        case 'right': return { x: box.x + box.w, y: box.cy };
+        case 'top': return { x: box.cx, y: box.y };
+        case 'bottom': return { x: box.cx, y: box.y + box.h };
+      }
+      return { x: box.cx, y: box.cy };
+    };
+    const dirVec = (side) => {
+      switch (side) {
+        case 'left': return { x: -1, y: 0 };
+        case 'right': return { x: 1, y: 0 };
+        case 'top': return { x: 0, y: -1 };
+        case 'bottom': return { x: 0, y: 1 };
+      }
+      return { x: 1, y: 0 };
+    };
+    // group-aware side selection with fallbacks near group edges
+    const groupA = this._getGroupBoxForNodeId(aBox.id);
+    const groupB = this._getGroupBoxForNodeId(bBox.id);
+    // choose sides
+    const valid = new Set(['top','right','bottom','left']);
+    let srcSide = valid.has(fromSide) ? fromSide : null;
+    let dstSide = valid.has(toSide) ? toSide : null;
+    if (!srcSide || !dstSide) {
+      // default geometry-based if not provided
+      if (abs(dx) >= abs(dy)) {
+        srcSide = srcSide || (dx >= 0 ? 'right' : 'left');
+        dstSide = dstSide || (dx >= 0 ? 'left' : 'right');
+      } else {
+        srcSide = srcSide || (dy >= 0 ? 'bottom' : 'top');
+        dstSide = dstSide || (dy >= 0 ? 'top' : 'bottom');
+      }
+    }
+    // adjust if near group edges, but only for sides that were not explicitly specified
+    if (!fromSide || !valid.has(fromSide)) srcSide = this._chooseSideWithGroup(aBox, groupA, srcSide, offset);
+    if (!toSide || !valid.has(toSide)) dstSide = this._chooseSideWithGroup(bBox, groupB, dstSide, offset);
+    const start = sidePoint(aBox, srcSide);
+    const end = sidePoint(bBox, dstSide);
+    const sv = dirVec(srcSide);
+    const ev = dirVec(dstSide);
+    const p1 = { x: start.x + sv.x * offset, y: start.y + sv.y * offset };
+    const p2 = { x: end.x + ev.x * offset, y: end.y + ev.y * offset };
+    // If aligned, draw straight with tiny rounding
+    if (p1.x === p2.x || p1.y === p2.y) {
+      return `M ${start.x} ${start.y} L ${p1.x} ${p1.y} L ${p2.x} ${p2.y} L ${end.x} ${end.y}`;
+    }
+    const horizontalFirst = (srcSide === 'left' || srcSide === 'right');
+    const corner = horizontalFirst ? { x: p2.x, y: p1.y } : { x: p1.x, y: p2.y };
+    // clamp radius to segment lengths
+    const d1 = horizontalFirst ? abs(corner.x - p1.x) : abs(corner.y - p1.y);
+    const d2 = horizontalFirst ? abs(p2.y - corner.y) : abs(p2.x - corner.x);
+    r = Math.min(r, Math.floor(Math.min(d1, d2)));
+    const p1r = horizontalFirst
+      ? { x: corner.x - sign(corner.x - p1.x) * r, y: p1.y }
+      : { x: p1.x, y: corner.y - sign(corner.y - p1.y) * r };
+    const p2r = horizontalFirst
+      ? { x: corner.x, y: corner.y + sign(p2.y - corner.y) * r }
+      : { x: corner.x + sign(p2.x - corner.x) * r, y: corner.y };
+    return [
+      `M ${start.x} ${start.y}`,
+      `L ${p1.x} ${p1.y}`,
+      `L ${p1r.x} ${p1r.y}`,
+      `Q ${corner.x} ${corner.y}, ${p2r.x} ${p2r.y}`,
+      `L ${p2.x} ${p2.y}`,
+      `L ${end.x} ${end.y}`
+    ].join(' ');
+  }
+
+  _getGroupBoxForNodeId(nodeId){
+    const nodesRef = this._ctx && this._ctx.nodes;
+    const isMap = nodesRef && typeof nodesRef.get === 'function';
+    const getById = (id) => isMap ? nodesRef.get(id) : (Array.isArray(nodesRef) ? nodesRef.find(x => x && x.id === id) : null);
+    const node = getById(nodeId);
+    if (node && node.groupId) {
+      const g = getById(node.groupId);
+      if (g && g.type === 'group' && g.position && g.size) {
+        return { x: g.position.x||0, y: g.position.y||0, w: g.size.w||0, h: g.size.h||0 };
+      }
+    }
+    const inner = this._ctx && this._ctx.inner;
+    const w = inner ? parseInt(inner.style.width||2000) : 2000;
+    const h = inner ? parseInt(inner.style.height||1200) : 1200;
+    return { x: 0, y: 0, w, h };
+  }
+
+  _chooseSideWithGroup(box, group, preferred, margin = 24){
+    const near = (side) => {
+      switch (side) {
+        case 'left':   return (box.x - group.x) < margin;
+        case 'right':  return (group.x + group.w - (box.x + box.w)) < margin;
+        case 'top':    return (box.y - group.y) < margin;
+        case 'bottom': return (group.y + group.h - (box.y + box.h)) < margin;
+      }
+      return false;
+    };
+    if (!near(preferred)) return preferred;
+    // fallback orders: prefer bottom if blocked on horizontal; prefer right if blocked on vertical
+    const orderMap = {
+      left:   ['bottom','top','right'],
+      right:  ['bottom','top','left'],
+      top:    ['right','left','bottom'],
+      bottom: ['right','left','top'],
+    };
+    const alts = orderMap[preferred] || [];
+    for (const s of alts) { if (!near(s)) return s; }
+    return preferred;
   }
 
   renderNodes(container, nodes, {
@@ -590,8 +729,13 @@ class NodeUI {
         const spec = graph[tid];
         if (!spec) return; // dead end
         const outs = [];
+        if (spec.branch && typeof spec.branch === 'object') {
+          // When skipping a disabled question, prefer an explicit branch if provided
+          const prefer = spec.skipBranch || spec.defaultBranch || null; // e.g., 'nein' or 'ja'
+          if (prefer && spec.branch[prefer]) outs.push(spec.branch[prefer]);
+          else outs.push(...Object.values(spec.branch).filter(Boolean));
+        }
         if (typeof spec.next === 'string') outs.push(spec.next);
-        if (spec.branch && typeof spec.branch === 'object') outs.push(...Object.values(spec.branch).filter(Boolean));
         outs.forEach(nid => pushTargets(nid));
       };
       pushTargets(startId);
@@ -600,16 +744,47 @@ class NodeUI {
     // Clear all current connections first
     const list = isMap ? Array.from(nodesRef.values()) : (Array.isArray(nodesRef) ? nodesRef : []);
     list.forEach(n => { if (n) n.connections = []; });
-    // Apply per graph
+    // Apply per graph, preserving branch metadata and optional side overrides
     Object.keys(graph).forEach(id => {
       const node = getById(id);
       if (!node || node.state === 'disabled') return;
       const spec = graph[id] || {};
-      const outs = [];
-      if (typeof spec.next === 'string') outs.push(spec.next);
-      if (spec.branch && typeof spec.branch === 'object') outs.push(...Object.values(spec.branch).filter(Boolean));
-      const resolved = outs.flatMap(tid => resolveNextEnabled(tid)).filter(Boolean);
-      node.connections = Array.from(new Set(resolved));
+      const conns = [];
+      // Branch outputs
+      if (spec.branch && typeof spec.branch === 'object') {
+        const outputSides = (spec.outputSides && typeof spec.outputSides === 'object') ? spec.outputSides : {};
+        const outputPointers = (spec.outputPointers && typeof spec.outputPointers === 'object') ? spec.outputPointers : {};
+        Object.keys(spec.branch).forEach(key => {
+          const initial = spec.branch[key];
+          if (!initial) return;
+          const targets = resolveNextEnabled(initial) || [];
+          // Allow: outputSides[key], keyOutput, keyOutputPointer
+          const side = outputPointers[key] || outputSides[key] || spec[`${key}OutputPointer`] || spec[`${key}Output`] || null; // e.g., jaOutputPointer/jaOutput
+          targets.forEach(tid => {
+            const targetSpec = graph[tid] || {};
+            // Allow: inputPointer or inputSide on target
+            const toSide = targetSpec.inputPointer || targetSpec.inputSide || null;
+            conns.push({ id: tid, fromSide: side, toSide, label: key });
+          });
+        });
+      }
+      // Linear next
+      if (typeof spec.next === 'string') {
+        const targets = resolveNextEnabled(spec.next) || [];
+        const side = spec.nextOutputPointer || spec.nextOutput || null;
+        targets.forEach(tid => {
+          const targetSpec = graph[tid] || {};
+          const toSide = targetSpec.inputPointer || targetSpec.inputSide || null;
+          if (side || toSide) conns.push({ id: tid, fromSide: side || undefined, toSide });
+          else conns.push(tid);
+        });
+      }
+      // Deduplicate while preserving objects
+      const seen = new Set();
+      node.connections = conns.filter(c => {
+        const key = typeof c === 'string' ? c : c.id + '|' + (c.fromSide||'') + '|' + (c.toSide||'');
+        if (seen.has(key)) return false; seen.add(key); return true;
+      });
     });
   }
 
@@ -838,6 +1013,11 @@ NodeUI.prototype._applyGraph = function(graph, nodes){
     }
   });
 };function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+
+// Expose NodeUI globally for classic script usage
+try { if (typeof window !== 'undefined') window.NodeUI = NodeUI; } catch(e){}
+try { if (typeof globalThis !== 'undefined') globalThis.NodeUI = NodeUI; } catch(e){}
+
 
 
 
