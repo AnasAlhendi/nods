@@ -124,11 +124,29 @@
   border-top-left-radius: 8px;
   border-top-right-radius: 8px;
   user-select: none;
+  display: flex;
+  align-items: center;
 }
 
 .group-box .group-body {
   position: relative;
   padding: 8px 8px 10px 8px;
+}
+
+/* Group checkbox (left) */
+.group-box .group-enable {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 8px;
+}
+.group-box .group-enable input {
+  width: 16px;
+  height: 16px;
+  accent-color: #1e5ea8;
+  cursor: pointer;
+}
+.group-box .group-title {
+  font-weight: 600;
 }
 
 /* حالة تحذير (!!) */

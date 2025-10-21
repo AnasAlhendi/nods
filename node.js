@@ -764,6 +764,14 @@ class NodeUI {
     const isMap = nodesRef && typeof nodesRef.get === 'function';
     const getById = (id) => isMap ? nodesRef.get(id) : (Array.isArray(nodesRef) ? nodesRef.find(x => x && x.id === id) : null);
     const isEnabled = (id) => { const n = getById(id); return !!(n && n.state !== 'disabled'); };
+    const isGroupUnchecked = (id) => {
+      const n = getById(id);
+      if (!n || !n.groupId) return false;
+      const g = getById(n.groupId);
+      return !!(g && g.type === 'group' && g.groupChecked === false);
+    };
+    const allowSource = (id) => !isGroupUnchecked(id);
+    const allowTarget = (id) => !isGroupUnchecked(id);
     const resolveNextEnabled = (startId, visited = new Set()) => {
       const results = new Set();
       const pushTargets = (tid) => {
@@ -795,6 +803,8 @@ class NodeUI {
     Object.keys(graph).forEach(id => {
       const node = getById(id);
       if (!node || node.state === 'disabled') return;
+      // If source node belongs to an unchecked group, do not emit any connections from it
+      if (!allowSource(id)) { node.connections = []; return; }
       const spec = graph[id] || {};
       const conns = [];
       // Branch outputs (with collapse to linear when all branches resolve to the same node)
@@ -808,7 +818,7 @@ class NodeUI {
         Object.keys(spec.branch).forEach(key => {
           const initial = spec.branch[key];
           if (!initial) return;
-          const targets = resolveNextEnabled(initial) || [];
+          const targets = (resolveNextEnabled(initial) || []).filter(tid => allowTarget(tid));
           branchTargetsMap[key] = targets;
           targets.forEach(tid => allTargetsSet.add(tid));
         });
@@ -844,7 +854,7 @@ class NodeUI {
       }
       // Linear next
       if (typeof spec.next === 'string') {
-        const targets = resolveNextEnabled(spec.next) || [];
+        const targets = (resolveNextEnabled(spec.next) || []).filter(tid => allowTarget(tid));
         let side = spec.nextOutputPointer || spec.nextOutput || null;
         if (!side && node) side = node.nextOutputPointer || node.nextOutput || side;
         targets.forEach(tid => {
@@ -924,6 +934,27 @@ class NodeUI {
         if (typeof spec.next === 'string') cur = spec.next; else break;
       }
     } catch(e) { /* ignore */ }
+  }
+
+  // Collect forward reachable node ids from a set of seed node ids following graph next + branches
+  _collectForwardFromSeeds(seeds) {
+    const out = new Set();
+    try {
+      if (!this._ctx || !this._ctx.graph) return out;
+      const graph = this._ctx.graph;
+      const stack = Array.isArray(seeds) ? seeds.slice() : [];
+      while (stack.length) {
+        const cur = stack.pop();
+        if (!cur || out.has(cur)) continue;
+        out.add(cur);
+        const spec = graph[cur] || {};
+        if (spec.branch && typeof spec.branch === 'object') {
+          Object.values(spec.branch).forEach(v => { if (v) stack.push(v); });
+        }
+        if (typeof spec.next === 'string') stack.push(spec.next);
+      }
+    } catch(e) {}
+    return out;
   }
 
   // Find upstream nodes that connect (per graph spec) into targetId
@@ -1010,10 +1041,67 @@ class NodeUI {
     box.style.height = ((n.size?.h) || 200) + 'px';
     box.dataset.groupId = n.id;
 
-    box.innerHTML = `
-      <div class="group-header">${escapeHtml(n.label || '')}</div>
-      <div class="group-body"></div>
-    `;
+    const header = document.createElement('div');
+    header.className = 'group-header';
+    // Group checkbox (left), default unchecked
+    const chkWrap = document.createElement('label');
+    chkWrap.className = 'group-enable';
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.checked = !!n.groupChecked;
+    chk.setAttribute('aria-label', 'Gruppe aktivieren');
+    chk.addEventListener('click', (e) => {
+      e.stopPropagation();
+      n.groupChecked = !!chk.checked;
+      try {
+        // Toggle member nodes' state based on group checkbox
+        if (this._ctx && this._ctx.nodes) {
+          const nodesRef = this._ctx.nodes;
+          const isMap = nodesRef && typeof nodesRef.get === 'function';
+          const list = isMap ? Array.from(nodesRef.values()) : (Array.isArray(nodesRef) ? nodesRef : []);
+          const members = list.filter(x => x && x.type !== 'group' && x.groupId === n.id);
+          if (n.groupChecked) {
+            members.forEach(m => {
+              if (m._prevStateGroup) { m.state = m._prevStateGroup; delete m._prevStateGroup; }
+              else if (m.state === 'disabled') { m.state = 'enabled'; }
+            });
+            // Special-case: Buchung branch chains live in Abschluss group; re-enable their chains
+            if (n.id === 'g-buchung-sub' || n.groupKind === 'buchung') {
+              this._enableChainFrom('zusammenfassungTermin');
+              this._enableChainFrom('zusammenfassungTicket');
+            }
+          } else {
+            members.forEach(m => {
+              if (!m._prevStateGroup) m._prevStateGroup = m.state;
+              m.state = 'disabled';
+              if (Array.isArray(m.connections)) m.connections = [];
+            });
+            // Special-case: also disable downstream chains outside the group
+            if (n.id === 'g-buchung-sub' || n.groupKind === 'buchung') {
+              this._disableChainFrom('zusammenfassungTermin');
+              this._disableChainFrom('zusammenfassungTicket');
+            }
+          }
+        }
+        if (this._ctx) {
+          if (this._ctx.graph) this._applyGraphWithDisabledSkip();
+          else this._applyConnectionsFromTrain();
+          this.refresh(this._getRenderOptions ? this._getRenderOptions() : undefined);
+        }
+      } catch(err) { /* ignore */ }
+    });
+    chkWrap.appendChild(chk);
+    header.appendChild(chkWrap);
+    const title = document.createElement('span');
+    title.className = 'group-title';
+    title.textContent = String(n.label || '');
+    header.appendChild(title);
+
+    const body = document.createElement('div');
+    body.className = 'group-body';
+
+    box.appendChild(header);
+    box.appendChild(body);
 
     // Dragging the group moves its contained elements (by groupId or position)
     box.addEventListener('mousedown', (e) => this._handleGroupDrag(e, box));

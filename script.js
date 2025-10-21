@@ -91,7 +91,8 @@ const nodes = [
 
   // Sub-groups (inside Menübaum)
   { id:'g-buchung-sub', type:'group', groupKind:'buchung', label:'Buchung',
-    position:{x:40,y:210}, size:{w:460,h:150}, state:'enabled', groupId:'g-menubaum' },
+    position:{x:40,y:210}, size:{w:460,h:150}, state:'enabled', groupId:'g-menubaum',
+    groupChecked: false },
   { id:'g-terminanmeldung-sub', type:'group', groupKind:'terminanmeldung', label:'Terminanmeldung',
     position:{x:520,y:210}, size:{w:460,h:150}, state:'enabled', groupId:'g-menubaum' },
   { id:'g-abschluss-sub', type:'group', groupKind:'abschluss', label:'Abschluss',
