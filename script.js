@@ -1,5 +1,3 @@
-// App script (classic). NodeUI is available as a global from node.js.
-
 // Canvas stadokte
 const state = {
   scale: 1,
@@ -33,9 +31,9 @@ const connectGraph = {
   wartennummer: {
     question: true,
     inputPointer: 'top',
-    // ja → right (إلى Zusammenfassung Anmeldung)
+    // ja → left (إلى Zusammenfassung Anmeldung)
     // nein → bottom (إلى Geburtsdatum)
-    jaOutputPointer: 'right',
+    jaOutputPointer: 'left',
     neinOutputPointer: 'bottom',
     branch: {
       ja:   "zusammenfassungAnmeldung",
@@ -92,9 +90,10 @@ const nodes = [
   // Sub-groups (inside Menübaum)
   { id:'g-buchung-sub', type:'group', groupKind:'buchung', label:'Buchung',
     position:{x:40,y:210}, size:{w:460,h:150}, state:'enabled', groupId:'g-menubaum',
-    groupChecked: false },
+    groupChecked: true },
   { id:'g-terminanmeldung-sub', type:'group', groupKind:'terminanmeldung', label:'Terminanmeldung',
-    position:{x:520,y:210}, size:{w:460,h:150}, state:'enabled', groupId:'g-menubaum' },
+    position:{x:520,y:210}, size:{w:460,h:150}, state:'enabled', groupId:'g-menubaum',
+    groupChecked: true },
   { id:'g-abschluss-sub', type:'group', groupKind:'abschluss', label:'Abschluss',
     position:{x:40,y:380}, size:{w:940,h:340}, state:'enabled', groupId:'g-menubaum' },
   { id:'g-sonstiges-sub', type:'group', groupKind:'sonstiges', label:'Sonstiges',
@@ -103,14 +102,17 @@ const nodes = [
   // ===== Vorauswahl =====
   { id:'start', label:'Sprachauswahl', tag:'(Start)', state:'enabled',
     position:{x:60,y:60}, groupId:'g-auswahl', connections:['einschr'],
+    checkbox: false,
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
 
   { id:'einschr', label:'Einschränkungen', state:'enabled',
     position:{x:360,y:60}, groupId:'g-auswahl', connections:['verw'],
+    checkbox: false,
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
 
   { id:'verw', label:'Verwaltungseinheiten', state:'enabled',
     position:{x:760,y:60}, groupId:'g-auswahl', connections:['habenSieTermin'],
+    checkbox: false,
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
 
   // ===== Menübaum Question (center top)
@@ -126,7 +128,7 @@ const nodes = [
   { id:'dienst', label:'Dienstleistungserfassung', state:'enabled',
     position:{x:80,y:250}, groupId:'g-buchung-sub', connections:['terminOpt'],
     inputPointer:'top',
-    checkbox:false,
+    checkbox:false, // ← no checkbox
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
 
   { id:'terminOpt', label:'Option Terminbuchung', state:'enabled', question:true,
@@ -141,55 +143,71 @@ const nodes = [
   { id:'wartennummer', label:'Anmeldung per Wartennummer', state:'enabled', question:true,
     position:{x:560,y:250}, groupId:'g-terminanmeldung-sub',
     inputPointer:'top',
-    jaOutputPointer:'right',
+    jaOutputPointer:'left',
     neinOutputPointer:'bottom',
+    checkbox:false,
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
 
   { id:'geburtsdatum', label:'Anmeldung per Geburtsdatum', state:'enabled',
     position:{x:560,y:300}, groupId:'g-terminanmeldung-sub',
     inputPointer:'top',
     nextOutputPointer:'right',
+    checkbox:true,
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
 
   // ===== Abschluss → Terminbuchung =====
   { id:'zusammenfassungTermin', label:'Zusammenfassung Terminbuchung', state:'enabled',
     position:{x:100,y:450}, groupId:'g-abschluss-sub', connections:['abschlussTermin'],
+    checkbox: true,
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
   { id:'abschlussTermin', label:'Abschluss Terminbuchung', state:'enabled',
     position:{x:100,y:490}, groupId:'g-abschluss-sub',
+    checkbox: false,
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
 
   // ===== Abschluss → Ticket =====
   { id:'zusammenfassungTicket', label:'Zusammenfassung Ticket', state:'enabled',
     position:{x:400,y:450}, groupId:'g-abschluss-sub', connections:['abschlussTicket'],
+    checkbox: true,
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
   { id:'abschlussTicket', label:'Abschluss Ticket', state:'enabled',
     position:{x:400,y:490}, groupId:'g-abschluss-sub',
+    checkbox: false,
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
 
   // ===== Abschluss → Anmeldung =====
   { id:'zusammenfassungAnmeldung', label:'Zusammenfassung Anmeldung', state:'enabled',
     position:{x:700,y:450}, groupId:'g-abschluss-sub', connections:['abschlussAnmeldung'],
+    inputPointer:'top',
+    outputPointer:'down',
+    checkbox: true,
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
   { id:'abschlussAnmeldung', label:'Abschluss Anmeldung', state:'enabled',
     position:{x:700,y:490}, groupId:'g-abschluss-sub',
+    inputPointer:'top',
+    checkbox: false,
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
 
   // ===== Sonstiges =====
   { id:'bildschirmschoner', label:'Bildschirmschoner', state:'enabled',
     position:{x:80,y:780}, groupId:'g-sonstiges-sub',
+    checkbox: false,
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
   { id:'sperrseiten', label:'Sperrseiten', state:'enabled',
     position:{x:280,y:780}, groupId:'g-sonstiges-sub',
+    checkbox: false,
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
   { id:'oeffnungszeiten', label:'Öffnungszeiten', state:'enabled',
     position:{x:480,y:780}, groupId:'g-sonstiges-sub',
+    checkbox: false,
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
   { id:'wegbeschreibung', label:'Wegbeschreibung', state:'enabled',
     position:{x:680,y:780}, groupId:'g-sonstiges-sub',
+    checkbox: false,
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
   { id:'treffen-optionen', label:'Treffen-Optionen', state:'enabled',
     position:{x:880,y:780}, groupId:'g-sonstiges-sub',
+    checkbox: false,
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} }
 ];
 

@@ -48,6 +48,7 @@ class NodeUI {
 
     const option = document.createElement('div');
     option.className = 'option-js';
+    const readonly = !!(n && n._groupReadonly);
     option.setAttribute('role', 'button');
     option.setAttribute('tabindex', '0');
     option.setAttribute('aria-label', `${n.label} ${n.tag || ''}`.trim());
@@ -77,8 +78,27 @@ class NodeUI {
 
     // Controls configuration (visibility/disabled)
     const enableCfg = Object.assign({ visible: true, disabled: false }, controls.enableToggle || {});
-    if (typeof n.checkbox === 'boolean') enableCfg.visible = n.checkbox;
-    else if (n.question === true) enableCfg.visible = false;
+    // Explicit checkbox setting takes precedence
+    if (typeof n.checkbox === 'boolean') {
+      enableCfg.visible = n.checkbox;
+    } else if (n.question === true) {
+      enableCfg.visible = false;
+    } else {
+      // Only show checkboxes for nodes in 'buchung' or 'terminanmeldung' groups
+      if (n.groupId) {
+        const nodesRef = this._ctx && this._ctx.nodes;
+        const isMap = nodesRef && typeof nodesRef.get === 'function';
+        const getById = (id) => isMap ? nodesRef.get(id) : (Array.isArray(nodesRef) ? nodesRef.find(x => x && x.id === id) : null);
+        const group = getById(n.groupId);
+        if (group && (group.groupKind === 'buchung' || group.groupKind === 'terminanmeldung')) {
+          enableCfg.visible = true;
+        } else {
+          enableCfg.visible = false;
+        }
+      } else {
+        enableCfg.visible = false;
+      }
+    }
     // Only one checkbox per node: hide connect toggle by default
     const connectCfg = Object.assign({ visible: false, disabled: false }, controls.connectToggle || {});
     const editCfg = Object.assign({ visible: true, disabled: false }, controls.editButton || {});
@@ -248,7 +268,7 @@ class NodeUI {
       option.appendChild(badge);
     }
 
-    option.addEventListener('click', () => onOpenConfig && onOpenConfig(n.id));
+    if (!readonly) option.addEventListener('click', () => onOpenConfig && onOpenConfig(n.id));
     option.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenConfig && onOpenConfig(n.id); }
     });
@@ -256,7 +276,8 @@ class NodeUI {
     option.addEventListener('blur', () => option.classList.remove('focus-ring'));
 
     // Dragging (optional)
-    if (dragEnabled) {
+    const dragAllowed = !!dragEnabled && !readonly;
+    if (dragAllowed) {
       const getScaleSafe = typeof getScale === 'function' ? getScale : () => 1;
       const onMouseDown = (e) => {
         if (e.button !== 0) return; // left only
@@ -294,6 +315,7 @@ class NodeUI {
       else option.classList.add('connect-pick');
     }
 
+    if (readonly) container.classList.add('readonly');
     container.appendChild(option);
     return container;
   }
@@ -381,15 +403,8 @@ class NodeUI {
 
     // Defer applying connections until context is initialized
 
-    // Parse connection chain (train) if provided
+    // Ignore legacy train connection chains; use graph from script.js as source of truth
     let parsedTrain = [];
-    if (option.connection) {
-      if (Array.isArray(option.connection)) parsedTrain = option.connection.slice();
-      else if (typeof option.connection === 'string') {
-        parsedTrain = option.connection.split(/[>,\s,]+/).map(s => s.trim()).filter(Boolean);
-      }
-      // do not set here; applied below
-    }
 
     const recordEvent = recordNodeEvent;
     const makeOptions = () => option.renderOptions || this.defaultRenderOptions(
@@ -764,14 +779,26 @@ class NodeUI {
     const isMap = nodesRef && typeof nodesRef.get === 'function';
     const getById = (id) => isMap ? nodesRef.get(id) : (Array.isArray(nodesRef) ? nodesRef.find(x => x && x.id === id) : null);
     const isEnabled = (id) => { const n = getById(id); return !!(n && n.state !== 'disabled'); };
-    const isGroupUnchecked = (id) => {
-      const n = getById(id);
-      if (!n || !n.groupId) return false;
-      const g = getById(n.groupId);
-      return !!(g && g.type === 'group' && g.groupChecked === false);
+    // Mark nodes read-only when their group (buchung/terminanmeldung) is unchecked,
+    // and propagate read-only to all forward-reachable nodes from those groups (summary chains, etc.).
+    const allList = isMap ? Array.from(nodesRef.values()) : (Array.isArray(nodesRef) ? nodesRef : []);
+    const specialGroups = allList.filter(g => g && g.type === 'group' && (g.groupKind === 'buchung' || g.groupKind === 'terminanmeldung'));
+    const uncheckedSpecial = new Set(specialGroups.filter(g => g.groupChecked === false).map(g => g.id));
+    // Seeds: members of unchecked special groups
+    const seeds = allList.filter(nd => nd && nd.type !== 'group' && uncheckedSpecial.has(nd.groupId || '')).map(nd => nd.id);
+    const forward = this._collectForwardFromSeeds ? this._collectForwardFromSeeds(seeds) : new Set();
+    const roIds = new Set(forward);
+    allList.forEach(nd => { if (nd && nd.type !== 'group') nd._groupReadonly = roIds.has(nd.id); });
+    const getGroup = (id) => { const n = getById(id); return (n && n.groupId) ? getById(n.groupId) : null; };
+    const isUncheckedSpecialGroup = (g) => !!(g && g.type === 'group' && g.groupChecked === false && (g.groupKind === 'buchung' || g.groupKind === 'terminanmeldung'));
+    const allowEdge = (srcId, dstId) => {
+      const gdst = getGroup(dstId), gsrc = getGroup(srcId);
+      // If destination is in an unchecked Buchung/Terminanmeldung, block only cross-group entry edges
+      if (isUncheckedSpecialGroup(gdst)) {
+        if (!gsrc || gsrc.id !== gdst.id) return false; // block from outside group
+      }
+      return true;
     };
-    const allowSource = (id) => !isGroupUnchecked(id);
-    const allowTarget = (id) => !isGroupUnchecked(id);
     const resolveNextEnabled = (startId, visited = new Set()) => {
       const results = new Set();
       const pushTargets = (tid) => {
@@ -803,8 +830,8 @@ class NodeUI {
     Object.keys(graph).forEach(id => {
       const node = getById(id);
       if (!node || node.state === 'disabled') return;
-      // If source node belongs to an unchecked group, do not emit any connections from it
-      if (!allowSource(id)) { node.connections = []; return; }
+
+
       const spec = graph[id] || {};
       const conns = [];
       // Branch outputs (with collapse to linear when all branches resolve to the same node)
@@ -818,7 +845,7 @@ class NodeUI {
         Object.keys(spec.branch).forEach(key => {
           const initial = spec.branch[key];
           if (!initial) return;
-          const targets = (resolveNextEnabled(initial) || []).filter(tid => allowTarget(tid));
+          const targets = (resolveNextEnabled(initial) || []).filter(tid => allowEdge(id, tid));
           branchTargetsMap[key] = targets;
           targets.forEach(tid => allTargetsSet.add(tid));
         });
@@ -854,7 +881,7 @@ class NodeUI {
       }
       // Linear next
       if (typeof spec.next === 'string') {
-        const targets = (resolveNextEnabled(spec.next) || []).filter(tid => allowTarget(tid));
+        const targets = (resolveNextEnabled(spec.next) || []).filter(tid => allowEdge(id, tid));
         let side = spec.nextOutputPointer || spec.nextOutput || null;
         if (!side && node) side = node.nextOutputPointer || node.nextOutput || side;
         targets.forEach(tid => {
@@ -872,6 +899,8 @@ class NodeUI {
         if (seen.has(key)) return false; seen.add(key); return true;
       });
     });
+
+    // No single-previous enforcement: allow multiple incoming connections as defined by the graph
   }
 
   // Resolve the base id from a train token (e.g., "habenSieTermin:ja" -> "habenSieTermin").
@@ -1043,55 +1072,38 @@ class NodeUI {
 
     const header = document.createElement('div');
     header.className = 'group-header';
-    // Group checkbox (left), default unchecked
-    const chkWrap = document.createElement('label');
-    chkWrap.className = 'group-enable';
-    const chk = document.createElement('input');
-    chk.type = 'checkbox';
-    chk.checked = !!n.groupChecked;
-    chk.setAttribute('aria-label', 'Gruppe aktivieren');
-    chk.addEventListener('click', (e) => {
-      e.stopPropagation();
-      n.groupChecked = !!chk.checked;
-      try {
-        // Toggle member nodes' state based on group checkbox
-        if (this._ctx && this._ctx.nodes) {
-          const nodesRef = this._ctx.nodes;
-          const isMap = nodesRef && typeof nodesRef.get === 'function';
-          const list = isMap ? Array.from(nodesRef.values()) : (Array.isArray(nodesRef) ? nodesRef : []);
-          const members = list.filter(x => x && x.type !== 'group' && x.groupId === n.id);
-          if (n.groupChecked) {
-            members.forEach(m => {
-              if (m._prevStateGroup) { m.state = m._prevStateGroup; delete m._prevStateGroup; }
-              else if (m.state === 'disabled') { m.state = 'enabled'; }
-            });
-            // Special-case: Buchung branch chains live in Abschluss group; re-enable their chains
-            if (n.id === 'g-buchung-sub' || n.groupKind === 'buchung') {
-              this._enableChainFrom('zusammenfassungTermin');
-              this._enableChainFrom('zusammenfassungTicket');
-            }
-          } else {
-            members.forEach(m => {
-              if (!m._prevStateGroup) m._prevStateGroup = m.state;
-              m.state = 'disabled';
-              if (Array.isArray(m.connections)) m.connections = [];
-            });
-            // Special-case: also disable downstream chains outside the group
-            if (n.id === 'g-buchung-sub' || n.groupKind === 'buchung') {
-              this._disableChainFrom('zusammenfassungTermin');
-              this._disableChainFrom('zusammenfassungTicket');
-            }
+    // Group checkbox (left) only for 'buchung' and 'terminanmeldung'
+    const showGroupCheckbox = n.groupKind === 'buchung' || n.groupKind === 'terminanmeldung';
+    if (showGroupCheckbox) {
+      const chkWrap = document.createElement('label');
+      chkWrap.className = 'group-enable';
+      const chk = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.checked = !!n.groupChecked;
+      chk.setAttribute('aria-label', 'Gruppe aktivieren');
+      chk.addEventListener('click', (e) => {
+        e.stopPropagation();
+        n.groupChecked = !!chk.checked;
+        try {
+          // Toggle read-only for members; recompute to apply entry-edge gating
+          if (this._ctx && this._ctx.nodes) {
+            const nodesRef = this._ctx.nodes;
+            const isMap = nodesRef && typeof nodesRef.get === 'function';
+            const list = isMap ? Array.from(nodesRef.values()) : (Array.isArray(nodesRef) ? nodesRef : []);
+            const members = list.filter(x => x && x.type !== 'group' && x.groupId === n.id);
+            const ro = !n.groupChecked;
+            members.forEach(m => { m._groupReadonly = ro; });
           }
-        }
-        if (this._ctx) {
-          if (this._ctx.graph) this._applyGraphWithDisabledSkip();
-          else this._applyConnectionsFromTrain();
-          this.refresh(this._getRenderOptions ? this._getRenderOptions() : undefined);
-        }
-      } catch(err) { /* ignore */ }
-    });
-    chkWrap.appendChild(chk);
-    header.appendChild(chkWrap);
+          if (this._ctx) {
+            if (this._ctx.graph) this._applyGraphWithDisabledSkip();
+            else this._applyConnectionsFromTrain();
+            this.refresh(this._getRenderOptions ? this._getRenderOptions() : undefined);
+          }
+        } catch(err) { /* ignore */ }
+      });
+      chkWrap.appendChild(chk);
+      header.appendChild(chkWrap);
+    }
     const title = document.createElement('span');
     title.className = 'group-title';
     title.textContent = String(n.label || '');
@@ -1240,13 +1252,10 @@ NodeUI.prototype._applyGraph = function(graph, nodes){
       if (outs.length) setConns(id, outs);
     }
   });
-};function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+};
+function escapeHtml(s) {
+  const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  return String(s).replace(/[&<>"']/g, ch => map[ch]);
+}
 
-// Expose NodeUI globally for classic script usage
-try { if (typeof window !== 'undefined') window.NodeUI = NodeUI; } catch(e){}
 try { if (typeof globalThis !== 'undefined') globalThis.NodeUI = NodeUI; } catch(e){}
-
-
-
-
-
