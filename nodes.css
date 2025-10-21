@@ -99,8 +99,9 @@
 /* طبقات */
 .canvas-inner { position: relative; }
 .nodes-layer  { position: absolute; inset: 0; }
-.group-box    { position: absolute; z-index: 1; }
+.group-box    { position: absolute; z-index: 0; }
 .node-js      { position: absolute; z-index: 2; }  /* العقد فوق المجموعات */
+.connections-layer { z-index: 1; }  /* الخطوط فوق المجموعات */
 
 /* القاعدة العامة للمجموعة */
 .group-box {

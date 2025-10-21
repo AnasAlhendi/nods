@@ -1,4 +1,4 @@
-// Node UI class: builds node DOM and exposes helpers (ES module)
+﻿// Node UI class: builds node DOM and exposes helpers (ES module)
 
 class NodeUI {
   static ICONS = {
@@ -133,7 +133,7 @@ class NodeUI {
           }
         } else {
           // Recompute all connections from train for current enabled/disabled state
-          this._applyConnectionsFromTrain();
+          if (!option.graph) this._applyConnectionsFromTrain();
         }
         // Notify callback if present (after state changes)
         if (typeof onEnableChange === 'function') onEnableChange(n.id, nextEnabled);
@@ -180,7 +180,7 @@ class NodeUI {
       btnHelp.addEventListener('click', (ev) => { ev.stopPropagation(); onOpenHelp && onOpenHelp(n.id); });
     }
 
-    // Order: enable • connect • label • actions
+    // Order: enable â€¢ connect â€¢ label â€¢ actions
     if (enable) option.appendChild(enable);
     if (connect) option.appendChild(connect);
     if (iconWrap) option.appendChild(iconWrap);
@@ -192,7 +192,7 @@ class NodeUI {
     if (n.state === 'warning') {
       const badge = document.createElement('span');
       badge.className = 'warning-badge';
-      badge.title = 'Unvollständige Konfiguration';
+      badge.title = 'UnvollstÃ¤ndige Konfiguration';
       option.appendChild(badge);
     }
 
@@ -271,6 +271,13 @@ class NodeUI {
       svg.setAttribute('class', 'connections-layer');
       inner.appendChild(svg);
     }
+    // Panels layer (behind nodes)
+    let panelsLayer = inner.querySelector('.panels-layer');
+    if (!panelsLayer) {
+      panelsLayer = document.createElement('div');
+      panelsLayer.className = 'panels-layer';
+      inner.appendChild(panelsLayer);
+    }
     let nodesLayer = inner.querySelector('.nodes-layer');
     if (!nodesLayer) {
       nodesLayer = document.createElement('div');
@@ -284,15 +291,15 @@ class NodeUI {
 
     // Optionally enable pan & zoom
     if (panZoomEnabled) this.enablePanZoom(wrapper, inner, { enabled: true });
-    return { wrapper, inner, svg, nodesLayer };
+    return { wrapper, inner, svg, nodesLayer, panelsLayer };
   }
 
   // Convenience: create canvas in a container and render nodes + connections.
   // Returns the created DOM references.
   renderInto(container, nodes, options = {}, canvasOptions = {}) {
-    const { svg, inner, nodesLayer } = this.ensureCanvas(container, canvasOptions);
+    const { svg, inner, nodesLayer, panelsLayer } = this.ensureCanvas(container, canvasOptions);
     this.rerender(nodesLayer, svg, inner, nodes, options);
-    return { svg, canvasInner: inner, nodesLayer };
+    return { svg, canvasInner: inner, nodesLayer, panelsLayer };
   }
 
   // Build helper: nodesUI.build(target, nodes, option)
@@ -317,7 +324,7 @@ class NodeUI {
     const panZoomEnabled = !!option.panZoomEnabled;
     const recordNodeEvent = option.recordNodeEvent;
 
-    const { wrapper, inner, svg, nodesLayer } = this.ensureCanvas(mount, { width, height, panZoomEnabled });
+    const { wrapper, inner, svg, nodesLayer, panelsLayer } = this.ensureCanvas(mount, { width, height, panZoomEnabled });
 
     // If state is provided, apply initial pan/scale
     if (option.state && typeof option.state === 'object') {
@@ -325,6 +332,11 @@ class NodeUI {
       if (option.state.pan && typeof option.state.pan.x === 'number' && typeof option.state.pan.y === 'number') {
         this.setPan(option.state.pan, inner);
       }
+    }
+
+    // Apply graph-based connections if provided
+    if (option.graph && (Array.isArray(nodes) || (nodes && typeof nodes.get === 'function'))) {
+      try { this._applyGraph(option.graph, nodes); } catch(e) { /* ignore */ }
     }
 
     // Parse connection chain (train) if provided
@@ -350,10 +362,10 @@ class NodeUI {
       option.dragEnabled !== false // default true unless explicitly false
     );
     // store context for future auto-renders
-    this._ctx = { wrapper, inner, svg, nodesLayer, nodes, state: option.state || null, train: parsedTrain };
+    this._ctx = { wrapper, inner, svg, nodesLayer, panelsLayer, nodes, state: option.state || null, train: parsedTrain };
     this._getRenderOptions = makeOptions;
     // Apply train-derived connections once before first render
-    this._applyConnectionsFromTrain();
+    if (!option.graph) this._applyConnectionsFromTrain();
     this.rerender(nodesLayer, svg, inner, nodes, makeOptions());
     return { wrapper, inner, svg, nodesLayer };
   }
@@ -431,28 +443,56 @@ class NodeUI {
     const getById = (id) => isMap ? nodes.get(id) : (Array.isArray(nodes) ? nodes.find(x => x.id === id) : null);
     const list = isMap ? Array.from(nodes.values()) : (Array.isArray(nodes) ? nodes : []);
     list.forEach(n => {
-      (n.connections || []).forEach(targetId => {
+      (n.connections || []).forEach(conn => {
+        let targetId = null, label = null;
+        if (typeof conn === 'string') targetId = conn;
+        else if (conn && typeof conn === 'object') { targetId = conn.to || conn.id; label = conn.label || null; }
         const t = getById(targetId); if (!t) return;
         const a = this._nodeAnchor(n.id); const b = this._nodeAnchor(t.id);
-        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        path.setAttribute('d', this._bezierPath(a, b));
-        path.setAttribute('fill', 'none');
-        path.setAttribute('stroke', 'var(--blue-600)');
-        path.setAttribute('stroke-width', '2');
-        path.setAttribute('marker-end', 'url(#arrow)');
-        path.addEventListener('mouseenter', () => path.setAttribute('stroke', '#2563EB'));
-        path.addEventListener('mouseleave', () => path.setAttribute('stroke', 'var(--blue-600)'));
-        svg.appendChild(path);
+        this._renderEdge(svg, a, b, label);
       });
     });
     this._ensureArrowMarker(svg);
+  }
+
+  _renderEdge(svg, a, b, label){
+    const id = `p${Math.random().toString(36).slice(2)}`;
+    const d = this._bezierPath(a, b);
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('id', id);
+    path.setAttribute('d', d);
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', 'var(--blue-600)');
+    path.setAttribute('stroke-width', '2');
+    path.setAttribute('marker-end', 'url(#arrow)');
+    svg.appendChild(path);
+    // Wider invisible hit path for better interaction
+    const hit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    hit.setAttribute('d', d);
+    hit.setAttribute('fill', 'none');
+    hit.setAttribute('stroke', 'transparent');
+    hit.setAttribute('stroke-width', '12');
+    hit.style.pointerEvents = 'stroke';
+    svg.appendChild(hit);
+    if (label) {
+      const text = document.createElementNS('http://www.w3.org/2000/svg','text');
+      text.setAttribute('font-size','11');
+      text.setAttribute('dominant-baseline','middle');
+      const tp = document.createElementNS('http://www.w3.org/2000/svg','textPath');
+      tp.setAttribute('href', `#${id}`);
+      tp.setAttribute('startOffset','50%');
+      tp.setAttribute('text-anchor','middle');
+      tp.textContent = label;
+      text.appendChild(tp);
+      svg.appendChild(text);
+    }
   }
 
   _ensureArrowMarker(svg){ let defs=svg.querySelector('defs'); if(!defs){ defs=document.createElementNS('http://www.w3.org/2000/svg','defs'); svg.prepend(defs);} let marker=svg.querySelector('#arrow'); if(!marker){ marker=document.createElementNS('http://www.w3.org/2000/svg','marker'); marker.setAttribute('id','arrow'); marker.setAttribute('markerWidth','10'); marker.setAttribute('markerHeight','7'); marker.setAttribute('refX','9'); marker.setAttribute('refY','3.5'); marker.setAttribute('orient','auto'); const poly=document.createElementNS('http://www.w3.org/2000/svg','polygon'); poly.setAttribute('points','0 0, 10 3.5, 0 7'); poly.setAttribute('fill','var(--blue-600)'); marker.appendChild(poly); defs.appendChild(marker);} }
 
   _nodeAnchor(id){ const el=document.querySelector(`[data-node-id="${id}"]`); if(!el) return {x:0,y:0}; const x=parseFloat(el.style.left)+el.offsetWidth/2; const y=parseFloat(el.style.top)+el.offsetHeight/2; return {x,y}; }
 
-  _bezierPath(a,b){ const dx=Math.max(60, Math.abs(b.x-a.x)*0.4); const c1={x:a.x+dx,y:a.y}; const c2={x:b.x-dx,y:b.y}; return `M ${a.x} ${a.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${b.x} ${b.y}`; }
+  _bezierPath(a,b){ return `M ${a.x} ${a.y} L ${b.x} ${b.y}`; }
   // (optionSelector removed; not used)
 
   // Render a list of nodes (Map or Array) into a container
@@ -469,11 +509,11 @@ class NodeUI {
     const isMap = nodes && typeof nodes.get === 'function';
     const list = isMap ? Array.from(nodes.values()) : (Array.isArray(nodes) ? nodes : []);
     
-    // 1) ارسم المجموعات (خلفية)
+    // 1) Ø§Ø±Ø³Ù… Ø§Ù„Ù…Ø¬Ù…ÙˆØ¹Ø§Øª (Ø®Ù„ÙÙŠØ©)
     const groups = list.filter(n => n && n.type === 'group');
     groups.forEach(g => this._renderGroup(container, g));
 
-    // 2) ارسم باقي العقد فوقها
+    // 2) Ø§Ø±Ø³Ù… Ø¨Ø§Ù‚ÙŠ Ø§Ù„Ø¹Ù‚Ø¯ ÙÙˆÙ‚Ù‡Ø§
     list.filter(n => n && n.type !== 'group').forEach(n => {
       const el = this.buildNodeElement(n, {
         onOpenConfig: n.openConfig,
@@ -524,15 +564,51 @@ class NodeUI {
   applyTrain(chain, { refresh = true } = {}) {
     if (!this._ctx) return;
     if (Array.isArray(chain)) this._ctx.train = chain.slice();
-    this._applyConnectionsFromTrain();
+    if (!option.graph) this._applyConnectionsFromTrain();
     if (refresh) this.refresh(this._getRenderOptions ? this._getRenderOptions() : undefined);
   }
   // (connect toggle handler removed; not used in current UI)
 
   // Convenience: render nodes and connections together
   rerender(container, svg, canvasInner, nodes, options = {}) {
-     this.renderNodes(container, nodes, options);
+    // Render groups (behind nodes) when available
+    if (this._ctx && this._ctx.panelsLayer) this.renderGroups(this._ctx.panelsLayer, nodes);
+    this.renderNodes(container, nodes, options);
     this.renderConnections(svg, canvasInner, nodes);
+  }
+
+  // Draw group boxes behind nodes for items with type === 'group'
+  renderGroups(panelsLayer, nodes){
+    if (!panelsLayer) return;
+    while (panelsLayer.firstChild) panelsLayer.removeChild(panelsLayer.firstChild);
+    const isMap = nodes && typeof nodes.get === 'function';
+    const list = isMap ? Array.from(nodes.values()) : (Array.isArray(nodes) ? nodes : []);
+    list.forEach(n => {
+      if (!n || n.type !== 'group' || !n.size || !n.position) return;
+      const box = document.createElement('div');
+      box.className = 'group-box';
+      box.style.position = 'absolute';
+      box.style.left = (n.position.x || 0) + 'px';
+      box.style.top = (n.position.y || 0) + 'px';
+      box.style.width = (n.size.w || 0) + 'px';
+      box.style.height = (n.size.h || 0) + 'px';
+      box.style.border = '1px solid rgba(0,0,0,0.2)';
+      box.style.background = 'rgba(0,0,0,0.03)';
+      box.style.borderRadius = '8px';
+      if (n.label) {
+        const lbl = document.createElement('div');
+        lbl.textContent = n.label;
+        lbl.style.fontWeight = '600';
+        lbl.style.fontSize = '12px';
+        lbl.style.padding = '2px 6px';
+        lbl.style.position = 'absolute';
+        lbl.style.left = '4px';
+        lbl.style.top = '4px';
+        lbl.style.background = 'rgba(255,255,255,0.7)';
+        box.appendChild(lbl);
+      }
+      panelsLayer.appendChild(box);
+    });
   }
 
   // (renderConnectionsAuto removed; not used by current app)
@@ -586,7 +662,7 @@ class NodeUI {
       <div class="group-body"></div>
     `;
 
-    // سحب المجموعة يحرك عناصرها المنتمية (groupId) أو التي تقع داخلها
+    // Ø³Ø­Ø¨ Ø§Ù„Ù…Ø¬Ù…ÙˆØ¹Ø© ÙŠØ­Ø±Ùƒ Ø¹Ù†Ø§ØµØ±Ù‡Ø§ Ø§Ù„Ù…Ù†ØªÙ…ÙŠØ© (groupId) Ø£Ùˆ Ø§Ù„ØªÙŠ ØªÙ‚Ø¹ Ø¯Ø§Ø®Ù„Ù‡Ø§
     box.addEventListener('mousedown', (e)=>{
       if (e.button !== 0) return;
       const start = { x: e.clientX, y: e.clientY };
@@ -596,16 +672,30 @@ class NodeUI {
       const isMap = nodesRef && typeof nodesRef.get === 'function';
       const list = isMap ? Array.from(nodesRef.values()) : (Array.isArray(nodesRef) ? nodesRef : []);
 
-      // أعضاء فعليين: حسب groupId أو داخل حدود الصندوق
+      // Ø£Ø¹Ø¶Ø§Ø¡ ÙØ¹Ù„ÙŠÙŠÙ†: Ø­Ø³Ø¨ groupId Ø£Ùˆ Ø¯Ø§Ø®Ù„ Ø­Ø¯ÙˆØ¯ Ø§Ù„ØµÙ†Ø¯ÙˆÙ‚
       const groupNode = list.find(n => n?.id === box.dataset.groupId);
-      const children = list.filter(n => n && n.type !== 'group' &&
-          (n.groupId === groupNode.id || this._isInsideGroup(n, groupNode)));
       
-      // حفظ المواقع الأصلية للأطفال
+      // Ø§Ø­ØµÙ„ Ø¹Ù„Ù‰ Ø¬Ù…ÙŠØ¹ Ø§Ù„Ø¹Ù‚Ø¯ Ø§Ù„ØªØ§Ø¨Ø¹Ø© Ù…Ø¨Ø§Ø´Ø±Ø© + Ø§Ù„Ø¹Ù‚Ø¯ Ø§Ù„ØªÙŠ ØªÙ‚Ø¹ Ø¯Ø§Ø®Ù„ Ø­Ø¯ÙˆØ¯ Ø§Ù„Ù…Ø¬Ù…ÙˆØ¹Ø©
+      const directChildren = list.filter(n => n && n.type !== 'group' && n.groupId === groupNode.id);
+      const insideChildren = list.filter(n => n && n.type !== 'group' && this._isInsideGroup(n, groupNode));
+      
+      // Ø¯Ù…Ø¬ Ø§Ù„Ù‚Ø§Ø¦Ù…ØªÙŠÙ† ÙˆØ¥Ø²Ø§Ù„Ø© Ø§Ù„ØªÙƒØ±Ø§Ø±Ø§Øª
+      const children = [...new Set([...directChildren, ...insideChildren])];
+      
+      // Ø§Ø­ØµÙ„ Ø¹Ù„Ù‰ Ø¬Ù…ÙŠØ¹ Ø§Ù„Ù…Ø¬Ù…ÙˆØ¹Ø§Øª Ø§Ù„ÙØ±Ø¹ÙŠØ© Ø¯Ø§Ø®Ù„ Ù‡Ø°Ù‡ Ø§Ù„Ù…Ø¬Ù…ÙˆØ¹Ø©
+      const subGroups = list.filter(n => n && n.type === 'group' && this._isInsideGroup(n, groupNode));
+      
+      // Ø­ÙØ¸ Ø§Ù„Ù…ÙˆØ§Ù‚Ø¹ Ø§Ù„Ø£ØµÙ„ÙŠØ© Ù„Ù„Ø¹Ù‚Ø¯ ÙˆØ§Ù„Ù…Ø¬Ù…ÙˆØ¹Ø§Øª Ø§Ù„ÙØ±Ø¹ÙŠØ©
       const originalPositions = children.map(c => ({
         id: c.id,
         x: c.position.x,
         y: c.position.y
+      }));
+      
+      const originalGroupPositions = subGroups.map(g => ({
+        id: g.id,
+        x: g.position.x,
+        y: g.position.y
       }));
 
       const onMove = (ev)=>{
@@ -616,7 +706,7 @@ class NodeUI {
         box.style.left = nx + 'px'; box.style.top = ny + 'px';
         groupNode.position.x = nx; groupNode.position.y = ny;
 
-        // حرّك الأطفال بنفس الإزاحة من مواقعهم الأصلية
+        // Ø­Ø±Ù‘Ùƒ Ø§Ù„Ø£Ø·ÙØ§Ù„ Ø¨Ù†ÙØ³ Ø§Ù„Ø¥Ø²Ø§Ø­Ø© Ù…Ù† Ù…ÙˆØ§Ù‚Ø¹Ù‡Ù… Ø§Ù„Ø£ØµÙ„ÙŠØ©
         children.forEach(c=>{
           const original = originalPositions.find(p => p.id === c.id);
           if (original) {
@@ -627,6 +717,37 @@ class NodeUI {
               el.style.left = c.position.x + 'px';
               el.style.top = c.position.y + 'px';
             }
+          }
+        });
+        
+        // Ø­Ø±Ù‘Ùƒ Ø§Ù„Ù…Ø¬Ù…ÙˆØ¹Ø§Øª Ø§Ù„ÙØ±Ø¹ÙŠØ© ÙˆØ¹Ù†Ø§ØµØ±Ù‡Ø§
+        subGroups.forEach(g=>{
+          const originalGroup = originalGroupPositions.find(p => p.id === g.id);
+          if (originalGroup) {
+            g.position.x = Math.round(originalGroup.x + dx);
+            g.position.y = Math.round(originalGroup.y + dy);
+            const groupEl = this._ctx?.wrapper?.querySelector(`[data-group-id="${g.id}"]`);
+            if (groupEl){
+              groupEl.style.left = g.position.x + 'px';
+              groupEl.style.top = g.position.y + 'px';
+            }
+            
+            // Ø­Ø±Ù‘Ùƒ Ø¬Ù…ÙŠØ¹ Ø§Ù„Ø¹Ù†Ø§ØµØ± Ø¯Ø§Ø®Ù„ Ø§Ù„Ù…Ø¬Ù…ÙˆØ¹Ø© Ø§Ù„ÙØ±Ø¹ÙŠØ©
+            const subGroupChildren = list.filter(n => n && n.type !== 'group' &&
+              (n.groupId === g.id || this._isInsideGroup(n, g)));
+            
+            subGroupChildren.forEach(child=>{
+              const childOriginal = originalPositions.find(p => p.id === child.id);
+              if (childOriginal) {
+                child.position.x = Math.round(childOriginal.x + dx);
+                child.position.y = Math.round(childOriginal.y + dy);
+                const childEl = this._ctx?.wrapper?.querySelector(`[data-node-id="${child.id}"]`);
+                if (childEl){
+                  childEl.style.left = child.position.x + 'px';
+                  childEl.style.top = child.position.y + 'px';
+                }
+              }
+            });
           }
         });
 
@@ -652,7 +773,25 @@ class NodeUI {
 
 
 
-function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+
+// Set node.connections from a declarative graph object
+NodeUI.prototype._applyGraph = function(graph, nodes){
+  if (!graph) return;
+  const isMap = nodes && typeof nodes.get === 'function';
+  const getById = (id) => isMap ? nodes.get(id) : (Array.isArray(nodes) ? nodes.find(n => n && n.id === id) : null);
+  const setConns = (id, targets) => { const n = getById(id); if (n) n.connections = targets.slice(); };
+  if (isMap) { nodes.forEach(n => { if (n) n.connections = []; }); }
+  else if (Array.isArray(nodes)) { nodes.forEach(n => { if (n) n.connections = []; }); }
+  Object.keys(graph).forEach(id => {
+    const spec = graph[id] || {};
+    if (spec && typeof spec.next === 'string') setConns(id, [spec.next]);
+    else if (spec && spec.branch && typeof spec.branch === 'object') {
+      const outs = Object.values(spec.branch).filter(Boolean);
+      if (outs.length) setConns(id, outs);
+    }
+  });
+};function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+
 
 
 
