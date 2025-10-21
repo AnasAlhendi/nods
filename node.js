@@ -106,35 +106,30 @@ class NodeUI {
           if (this._ctx && this._ctx.state && this._ctx.state.connectingFrom === n.id) {
             this._ctx.state.connectingFrom = null;
           }
-          // Also update inbound links pointing to this node
-          if (this._ctx && this._ctx.nodes) {
-            const nodesRef = this._ctx.nodes;
-            const isMap = nodesRef && typeof nodesRef.get === 'function';
-            const list = isMap ? Array.from(nodesRef.values()) : (Array.isArray(nodesRef) ? nodesRef : []);
-            // Determine train neighbors for bypass
-            let nextInTrain = null, prevInTrain = null;
-            if (this._ctx && Array.isArray(this._ctx.train)) {
-              const idx = this._ctx.train.indexOf(n.id);
-              if (idx > 0) prevInTrain = this._ctx.train[idx - 1];
-              if (idx >= 0 && idx < this._ctx.train.length - 1) nextInTrain = this._ctx.train[idx + 1];
-            }
-            list.forEach(m => {
-              if (!m || !Array.isArray(m.connections)) return;
-              if (m.connections.indexOf(n.id) !== -1) {
-                // Remember original upstream target as this node
-                m.lastTarget = n.id;
-                // If train info available and there is a next after this node, bypass to it
-                if (nextInTrain) {
-                  m.connections = [nextInTrain];
-                } else {
-                  m.connections = [];
+          if (this._ctx && this._ctx.graph) {
+            // Graph-aware recompute: skip disabled nodes, preserve questions
+            this._applyGraphWithDisabledSkip();
+          } else {
+            // Train-based bypass for inbound links
+            if (this._ctx && this._ctx.nodes) {
+              const nodesRef = this._ctx.nodes;
+              const isMap = nodesRef && typeof nodesRef.get === 'function';
+              const list = isMap ? Array.from(nodesRef.values()) : (Array.isArray(nodesRef) ? nodesRef : []);
+              list.forEach(m => {
+                if (!m || !Array.isArray(m.connections)) return;
+                if (m.connections.indexOf(n.id) !== -1) {
+                  m.lastTarget = n.id;
+                  const nextTarget = this._findNextEnabledAfter(n.id);
+                  if (nextTarget) m.connections = [nextTarget]; else m.connections = [];
                 }
-              }
-            });
+              });
+            }
+            this._applyConnectionsFromTrain();
           }
         } else {
-          // Recompute all connections from train for current enabled/disabled state
-          this._applyConnectionsFromTrain();
+          // Recompute for current enabled/disabled state
+          if (this._ctx && this._ctx.graph) this._applyGraphWithDisabledSkip();
+          else this._applyConnectionsFromTrain();
         }
         // Notify callback if present (after state changes)
         if (typeof onEnableChange === 'function') onEnableChange(n.id, nextEnabled);
@@ -356,7 +351,7 @@ class NodeUI {
       option.dragEnabled !== false // default true unless explicitly false
     );
     // store context for future auto-renders
-    this._ctx = { wrapper, inner, svg, nodesLayer, nodes, state: option.state || null, train: parsedTrain };
+    this._ctx = { wrapper, inner, svg, nodesLayer, nodes, state: option.state || null, train: parsedTrain, graph: (option.graph || null) };
     this._getRenderOptions = makeOptions;
     // Apply train-derived connections once before first render
     if (!option.graph) this._applyConnectionsFromTrain();
@@ -565,17 +560,76 @@ class NodeUI {
     list.forEach(n => { if (n) n.connections = []; });
     const t = this._ctx.train;
     for (let i = 0; i < t.length; i++) {
-      const aId = t[i];
+      const aId = this._trainBaseId(t[i]);
       const a = getById(aId);
       if (!a || a.state === 'disabled') continue;
-      // find next enabled in train
+      // find next enabled in train (respecting branch tokens)
       let target = null;
       for (let j = i + 1; j < t.length; j++) {
-        const b = getById(t[j]);
+        const nextId = this._trainBaseId(t[j]);
+        const b = getById(nextId);
         if (b && b.state !== 'disabled') { target = b.id; break; }
       }
       if (target) a.connections = [target]; else a.connections = [];
     }
+  }
+
+  // Apply connections based on the declarative graph while skipping disabled nodes.
+  _applyGraphWithDisabledSkip() {
+    if (!this._ctx || !this._ctx.graph || !this._ctx.nodes) return;
+    const graph = this._ctx.graph;
+    const nodesRef = this._ctx.nodes;
+    const isMap = nodesRef && typeof nodesRef.get === 'function';
+    const getById = (id) => isMap ? nodesRef.get(id) : (Array.isArray(nodesRef) ? nodesRef.find(x => x && x.id === id) : null);
+    const isEnabled = (id) => { const n = getById(id); return !!(n && n.state !== 'disabled'); };
+    const resolveNextEnabled = (startId, visited = new Set()) => {
+      const results = new Set();
+      const pushTargets = (tid) => {
+        if (!tid || visited.has(tid)) return; visited.add(tid);
+        if (isEnabled(tid)) { results.add(tid); return; }
+        const spec = graph[tid];
+        if (!spec) return; // dead end
+        const outs = [];
+        if (typeof spec.next === 'string') outs.push(spec.next);
+        if (spec.branch && typeof spec.branch === 'object') outs.push(...Object.values(spec.branch).filter(Boolean));
+        outs.forEach(nid => pushTargets(nid));
+      };
+      pushTargets(startId);
+      return Array.from(results);
+    };
+    // Clear all current connections first
+    const list = isMap ? Array.from(nodesRef.values()) : (Array.isArray(nodesRef) ? nodesRef : []);
+    list.forEach(n => { if (n) n.connections = []; });
+    // Apply per graph
+    Object.keys(graph).forEach(id => {
+      const node = getById(id);
+      if (!node || node.state === 'disabled') return;
+      const spec = graph[id] || {};
+      const outs = [];
+      if (typeof spec.next === 'string') outs.push(spec.next);
+      if (spec.branch && typeof spec.branch === 'object') outs.push(...Object.values(spec.branch).filter(Boolean));
+      const resolved = outs.flatMap(tid => resolveNextEnabled(tid)).filter(Boolean);
+      node.connections = Array.from(new Set(resolved));
+    });
+  }
+
+  // Resolve the base id from a train token (e.g., "habenSieTermin:ja" -> "habenSieTermin").
+  _trainBaseId(token) { return String(token || '').split(':')[0]; }
+
+  // Find the next enabled node id in train after the given id. Returns null if none.
+  _findNextEnabledAfter(id) {
+    if (!this._ctx || !Array.isArray(this._ctx.train) || !this._ctx.nodes) return null;
+    const t = this._ctx.train;
+    const nodesRef = this._ctx.nodes;
+    const isMap = nodesRef && typeof nodesRef.get === 'function';
+    const getById = (nid) => isMap ? nodesRef.get(nid) : (Array.isArray(nodesRef) ? nodesRef.find(x => x && x.id === nid) : null);
+    const idx = t.indexOf(id);
+    for (let j = idx + 1; j < t.length; j++) {
+      const base = this._trainBaseId(t[j]);
+      const node = getById(base);
+      if (node && node.state !== 'disabled') return node.id;
+    }
+    return null;
   }
 
   // Re-apply a new train and refresh
