@@ -108,6 +108,7 @@ const nodes = [
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
   // سؤال رئيسي موضوعه وسط الـMenübaum (كما بالصورة)
   { id:'habenSieTermin', label:'Haben Sie für heute einen Termin?', state:'enabled', question:true,
+    checkbox: false,
     position:{x:470,y:210}, groupId:'g-menubaum',
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
   { id:'geburtsdatum', label:'Anmeldung per Geburtsdatum', state:'enabled',

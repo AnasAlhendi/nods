@@ -77,6 +77,7 @@ class NodeUI {
 
     // Controls configuration (visibility/disabled)
     const enableCfg = Object.assign({ visible: true, disabled: false }, controls.enableToggle || {});
+    if (typeof n.checkbox === 'boolean') enableCfg.visible = n.checkbox;
     // Only one checkbox per node: hide connect toggle by default
     const connectCfg = Object.assign({ visible: false, disabled: false }, controls.connectToggle || {});
     const editCfg = Object.assign({ visible: true, disabled: false }, controls.editButton || {});
