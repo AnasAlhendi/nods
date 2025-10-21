@@ -10,21 +10,21 @@ const state = {
 // (node event recording removed)
 
 // Data model (array of nodes) with nested groups
+// 1) Graph model — branches + pointers aligned with the UI
 const connectGraph = {
-  start: { next: "einschr" },
-  einschr: { next: "verw" },
-  verw: { next: "habenSieTermin" },
+  start:  { next: "einschr" },
+  einschr:{ next: "verw" },
+  verw:   { next: "habenSieTermin" },
 
   // السؤال الرئيسي
   habenSieTermin: {
     question: true,
     inputPointer: 'top',
-    // Control branch output ports (new names)
+    // ja → right (إلى Terminanmeldung) | nein → left (إلى Buchung)
     jaOutputPointer: 'right',
     neinOutputPointer: 'left',
-    // also supports: outputPointers: { ja:'right', nein:'left' }
     branch: {
-      ja: "wartennummer",
+      ja:   "wartennummer",
       nein: "dienst"
     }
   },
@@ -33,36 +33,40 @@ const connectGraph = {
   wartennummer: {
     question: true,
     inputPointer: 'top',
+    // ja → right (إلى Zusammenfassung Anmeldung)
+    // nein → bottom (إلى Geburtsdatum)
     jaOutputPointer: 'right',
     neinOutputPointer: 'bottom',
     branch: {
-      ja: "zusammenfassungAnmeldung",  // معه رقم انتظار
-      nein: "geburtsdatum"             // ما معه رقم → نسأله تاريخ الميلاد
+      ja:   "zusammenfassungAnmeldung",
+      nein: "geburtsdatum"
     }
   },
+
   geburtsdatum: {
-    next: "zusammenfassungAnmeldung",
     inputPointer: 'top',
-    nextOutputPointer: 'right'
+    nextOutputPointer: 'right',
+    next: "zusammenfassungAnmeldung"
   },
+
   zusammenfassungAnmeldung: { next: "abschlussAnmeldung" },
   abschlussAnmeldung: { end: true },
 
   // فرع ما عنده موعد (nein)
   dienst: {
-    next: "terminOpt",
-    inputPointer: 'top'
+    inputPointer: 'top',
+    next: "terminOpt"
   },
 
   terminOpt: {
     question: true,
     inputPointer: 'top',
-    // When disabled, follow this branch by default
-    skipBranch: 'nein',
-    // Optional output pointer preference
+    onDisableRoute: 'nein',
+    // ja ↓ Terminbuchung | nein → Ticket
+    jaOutputPointer: 'bottom',
     neinOutputPointer: 'right',
     branch: {
-      ja: "zusammenfassungTermin",
+      ja:   "zusammenfassungTermin",
       nein: "zusammenfassungTicket"
     }
   },
@@ -77,7 +81,7 @@ const connectGraph = {
 };
 
 
-/** 2) العقد والمجموعات (Nodes) — مع question:true ومواقع x/y مضبوطة */
+// 2) Nodes (positions match the screenshot layout)
 const nodes = [
   // ===== Groups =====
   { id:'g-auswahl', type:'group', groupKind:'auswahl', label:'Vorauswahl',
@@ -95,47 +99,55 @@ const nodes = [
   { id:'g-sonstiges-sub', type:'group', groupKind:'sonstiges', label:'Sonstiges',
     position:{x:40,y:740}, size:{w:940,h:120}, state:'enabled', groupId:'g-menubaum' },
 
-  // Sub-groups (inside Abschluss) removed: tasks remain directly in 'g-abschluss-sub'
-
   // ===== Vorauswahl =====
   { id:'start', label:'Sprachauswahl', tag:'(Start)', state:'enabled',
     position:{x:60,y:60}, groupId:'g-auswahl', connections:['einschr'],
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
+
   { id:'einschr', label:'Einschränkungen', state:'enabled',
     position:{x:360,y:60}, groupId:'g-auswahl', connections:['verw'],
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
+
   { id:'verw', label:'Verwaltungseinheiten', state:'enabled',
     position:{x:760,y:60}, groupId:'g-auswahl', connections:['habenSieTermin'],
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
 
-  // ===== Buchung =====
-  { id:'dienst', label:'Dienstleistungserfassung', state:'enabled',
-    position:{x:80,y:250}, groupId:'g-buchung-sub', connections:['terminOpt'],
-    inputPointer: 'top',
-    checkbox: false,
-    openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
-  { id:'terminOpt', label:'Option Terminbuchung', state:'enabled', question:true,
-    position:{x:80,y:300}, groupId:'g-buchung-sub',
-    inputPointer: 'top',
-    checkbox: true,
-    openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
-
-  // ===== Terminanmeldung =====
-  { id:'wartennummer', label:'Anmeldung per Wartennummer', state:'enabled', question:true,
-    position:{x:560,y:250}, groupId:'g-terminanmeldung-sub',
-    inputPointer: 'top',
-    jaOutputPointer: 'right',
-    neinOutputPointer: 'bottom',
-    openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
-  // سؤال رئيسي موضوعه وسط الـMenübaum (كما بالصورة)
+  // ===== Menübaum Question (center top)
   { id:'habenSieTermin', label:'Haben Sie für heute einen Termin?', state:'enabled', question:true,
     checkbox: false,
     position:{x:470,y:210}, groupId:'g-menubaum',
+    inputPointer:'top',
+    jaOutputPointer:'right',
+    neinOutputPointer:'left',
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
+
+  // ===== Buchung (left) =====
+  { id:'dienst', label:'Dienstleistungserfassung', state:'enabled',
+    position:{x:80,y:250}, groupId:'g-buchung-sub', connections:['terminOpt'],
+    inputPointer:'top',
+    checkbox:false,
+    openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
+
+  { id:'terminOpt', label:'Option Terminbuchung', state:'enabled', question:true,
+    position:{x:80,y:300}, groupId:'g-buchung-sub',
+    inputPointer:'top',
+    jaOutputPointer:'bottom',   // down into Abschluss → Terminbuchung
+    neinOutputPointer:'right',  // across to Abschluss → Ticket
+    checkbox:true,
+    openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
+
+  // ===== Terminanmeldung (right) =====
+  { id:'wartennummer', label:'Anmeldung per Wartennummer', state:'enabled', question:true,
+    position:{x:560,y:250}, groupId:'g-terminanmeldung-sub',
+    inputPointer:'top',
+    jaOutputPointer:'right',
+    neinOutputPointer:'bottom',
+    openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
+
   { id:'geburtsdatum', label:'Anmeldung per Geburtsdatum', state:'enabled',
     position:{x:560,y:300}, groupId:'g-terminanmeldung-sub',
-    inputPointer: 'top',
-    nextOutputPointer: 'right',
+    inputPointer:'top',
+    nextOutputPointer:'right',
     openConfig:()=>{}, openHelp:()=>{}, openEdit:()=>{}, onChangeCheckbox:()=>{} },
 
   // ===== Abschluss → Terminbuchung =====
@@ -181,23 +193,40 @@ const nodes = [
 ];
 
 
-/** 3) Connection — مصفوفة واحدة تشمل كل الفروع (ja / nein) */
+// 3) Connection — one array with all branches (ja / nein)
 const fullConnection = [
-  "start","einschr","verw",
+  // --- Vorauswahl ---
+  "start",
+  "einschr",
+  "verw",
 
-  // عنده موعد (ja) → سؤال رقم الانتظار
-  "habenSieTermin:ja",
-  "wartennummer:ja","zusammenfassungAnmeldung","abschlussAnmeldung",
-  "wartennummer:nein","geburtsdatum","zusammenfassungAnmeldung","abschlussAnmeldung",
+  // --- Menübaum ---
+  "habenSieTermin",
+  [
+    // JA → Terminanmeldung (right side)
+    [
+      "habenSieTermin:ja",
+      ["wartennummer",
+        ["wartennummer:ja","zusammenfassungAnmeldung","abschlussAnmeldung"],
+        ["wartennummer:nein","geburtsdatum","zusammenfassungAnmeldung","abschlussAnmeldung"]
+      ]
+    ],
 
-  // ما عنده موعد (nein) → Buchung → Option Termin
-  "habenSieTermin:nein","dienst",
-  "terminOpt:ja","zusammenfassungTermin","abschlussTermin",
-  "terminOpt:nein","zusammenfassungTicket","abschlussTicket"
+    // NEIN → Buchung (left side)
+    [
+      "habenSieTermin:nein",
+      "dienst",
+      "terminOpt",
+      [
+        ["terminOpt:ja","zusammenfassungTermin","abschlussTermin"],
+        ["terminOpt:nein","zusammenfassungTicket","abschlussTicket"]
+      ]
+    ]
+  ]
 ];
 
 
-/** 4) Render — بناء اللوحة */
+// 4) Render
 const nodesUI = new NodeUI();
 const targetContainer = '.canvas-container';
 nodesUI.build(targetContainer, nodes, {
@@ -205,11 +234,10 @@ nodesUI.build(targetContainer, nodes, {
   height: 1200,
   panZoomEnabled: true,
   state: typeof state !== "undefined" ? state : "enabled",
-  graph: connectGraph,        // مفيد للتحقق/التلوين بحسب الفروع
-  connection: fullConnection, // المصفوفة الشاملة
+  graph: connectGraph,
+  connection: fullConnection,
   dragEnabled: true
 });
-
 // Header buttons (without optional chaining for wider browser support)
 var btnSettings = document.getElementById('btnSettings');
 if (btnSettings) btnSettings.addEventListener('click', function () { openSettings(); });

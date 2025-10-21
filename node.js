@@ -100,6 +100,14 @@ class NodeUI {
         // Always apply default toggle/disconnect/reconnect behavior
         n.state = nextEnabled ? 'enabled' : 'disabled';
         if (!nextEnabled) {
+          // Capture upstream nodes currently pointing to this node
+          let upstreams = [];
+          if (this._ctx && this._ctx.nodes) {
+            const nodesRef0 = this._ctx.nodes;
+            const isMap0 = nodesRef0 && typeof nodesRef0.get === 'function';
+            const list0 = isMap0 ? Array.from(nodesRef0.values()) : (Array.isArray(nodesRef0) ? nodesRef0 : []);
+            upstreams = list0.filter(m => m && Array.isArray(m.connections) && m.connections.indexOf(n.id) !== -1);
+          }
           if (Array.isArray(n.connections) && n.connections[0]) {
             n.lastTarget = n.connections[0];
           }
@@ -108,8 +116,22 @@ class NodeUI {
             this._ctx.state.connectingFrom = null;
           }
           if (this._ctx && this._ctx.graph) {
-            // Graph-aware recompute: skip disabled nodes, preserve questions
+            // Graph-aware recompute: skip disabled nodes and route upstreams via onDisableRoute when provided
             this._applyGraphWithDisabledSkip();
+            // Additionally, for question nodes, disable non-selected branch chains
+            try {
+              const graph = this._ctx.graph;
+              const spec = graph && graph[n.id] ? graph[n.id] : null;
+              if (spec && spec.branch && typeof spec.branch === 'object') {
+                const chosen = spec.onDisableRoute || n.onDisableRoute || null;
+                Object.keys(spec.branch).forEach(key => {
+                  if (!chosen || key !== chosen) {
+                    const startId = spec.branch[key];
+                    if (startId) this._disableChainFrom(startId);
+                  }
+                });
+              }
+            } catch(e) { /* ignore */ }
           } else {
             // Train-based bypass for inbound links
             if (this._ctx && this._ctx.nodes) {
@@ -127,10 +149,31 @@ class NodeUI {
             }
             this._applyConnectionsFromTrain();
           }
+          // After recompute, set upstream states based on whether they still have an outgoing connection
+          if (Array.isArray(upstreams) && upstreams.length) {
+            upstreams.forEach(u => {
+              const hasOut = Array.isArray(u.connections) && u.connections.length > 0;
+              u.state = hasOut ? 'enabled' : 'disabled';
+            });
+          }
         } else {
           // Recompute for current enabled/disabled state
-          if (this._ctx && this._ctx.graph) this._applyGraphWithDisabledSkip();
-          else this._applyConnectionsFromTrain();
+          if (this._ctx && this._ctx.graph) {
+            try {
+              const graph = this._ctx.graph;
+              const spec = graph && graph[n.id] ? graph[n.id] : null;
+              // If this node is a question, re-enable its branch chains
+              if (spec && spec.branch && typeof spec.branch === 'object') {
+                Object.values(spec.branch).filter(Boolean).forEach(tid => this._enableChainFrom(tid));
+              }
+              // Enable upstream nodes that lead into this node per graph
+              const ups = this._getUpstreamsFor(n.id) || [];
+              ups.forEach(u => { if (u) u.state = 'enabled'; });
+            } catch(e) { /* ignore */ }
+            this._applyGraphWithDisabledSkip();
+          } else {
+            this._applyConnectionsFromTrain();
+          }
         }
         // Notify callback if present (after state changes)
         if (typeof onEnableChange === 'function') onEnableChange(n.id, nextEnabled);
@@ -729,9 +772,13 @@ class NodeUI {
         const spec = graph[tid];
         if (!spec) return; // dead end
         const outs = [];
+        const nodeRef = getById(tid);
+        const disabled = nodeRef ? (nodeRef.state === 'disabled') : true;
         if (spec.branch && typeof spec.branch === 'object') {
-          // When skipping a disabled question, prefer an explicit branch if provided
-          const prefer = spec.skipBranch || spec.defaultBranch || null; // e.g., 'nein' or 'ja'
+          // Prefer onDisableRoute when the intermediate node is disabled
+          const prefer = disabled
+            ? (spec.onDisableRoute || (nodeRef && nodeRef.onDisableRoute) || spec.skipBranch || spec.defaultBranch || null)
+            : null;
           if (prefer && spec.branch[prefer]) outs.push(spec.branch[prefer]);
           else outs.push(...Object.values(spec.branch).filter(Boolean));
         }
@@ -750,31 +797,60 @@ class NodeUI {
       if (!node || node.state === 'disabled') return;
       const spec = graph[id] || {};
       const conns = [];
-      // Branch outputs
+      // Branch outputs (with collapse to linear when all branches resolve to the same node)
       if (spec.branch && typeof spec.branch === 'object') {
         const outputSides = (spec.outputSides && typeof spec.outputSides === 'object') ? spec.outputSides : {};
         const outputPointers = (spec.outputPointers && typeof spec.outputPointers === 'object') ? spec.outputPointers : {};
+        const srcNode = getById(id) || {};
+
+        const branchTargetsMap = {};
+        const allTargetsSet = new Set();
         Object.keys(spec.branch).forEach(key => {
           const initial = spec.branch[key];
           if (!initial) return;
           const targets = resolveNextEnabled(initial) || [];
-          // Allow: outputSides[key], keyOutput, keyOutputPointer
-          const side = outputPointers[key] || outputSides[key] || spec[`${key}OutputPointer`] || spec[`${key}Output`] || null; // e.g., jaOutputPointer/jaOutput
-          targets.forEach(tid => {
-            const targetSpec = graph[tid] || {};
-            // Allow: inputPointer or inputSide on target
-            const toSide = targetSpec.inputPointer || targetSpec.inputSide || null;
-            conns.push({ id: tid, fromSide: side, toSide, label: key });
-          });
+          branchTargetsMap[key] = targets;
+          targets.forEach(tid => allTargetsSet.add(tid));
         });
+
+        if (allTargetsSet.size === 1) {
+          // Both branches point to the same node: treat as non-question linear next
+          const onlyTarget = Array.from(allTargetsSet)[0];
+          const targetSpec = graph[onlyTarget] || {};
+          const targetNode = getById(onlyTarget) || {};
+          const toSide = targetSpec.inputPointer || targetSpec.inputSide || targetNode.inputPointer || targetNode.inputSide || null;
+          // Prefer a generic next output pointer if provided
+          const fromSide = spec.nextOutputPointer || srcNode.nextOutputPointer || null;
+          conns.push(fromSide || toSide ? { id: onlyTarget, fromSide: fromSide || undefined, toSide: toSide || undefined } : onlyTarget);
+          // Also reflect non-question state for UI (e.g., show checkbox if not explicitly hidden)
+          if (srcNode) srcNode.question = false;
+        } else {
+          // Build per-branch connections with side hints
+          Object.keys(branchTargetsMap).forEach(key => {
+            const targets = branchTargetsMap[key] || [];
+            let side = outputPointers[key] || outputSides[key] || spec[`${key}OutputPointer`] || spec[`${key}Output`] || null;
+            if (!side && srcNode) {
+              const map = (srcNode.outputPointers && typeof srcNode.outputPointers === 'object') ? srcNode.outputPointers : {};
+              side = map[key] || srcNode[`${key}OutputPointer`] || srcNode[`${key}Output`] || side;
+            }
+            targets.forEach(tid => {
+              const targetSpec = graph[tid] || {};
+              const targetNode = getById(tid) || {};
+              const toSide = targetSpec.inputPointer || targetSpec.inputSide || targetNode.inputPointer || targetNode.inputSide || null;
+              conns.push({ id: tid, fromSide: side, toSide, label: key });
+            });
+          });
+        }
       }
       // Linear next
       if (typeof spec.next === 'string') {
         const targets = resolveNextEnabled(spec.next) || [];
-        const side = spec.nextOutputPointer || spec.nextOutput || null;
+        let side = spec.nextOutputPointer || spec.nextOutput || null;
+        if (!side && node) side = node.nextOutputPointer || node.nextOutput || side;
         targets.forEach(tid => {
           const targetSpec = graph[tid] || {};
-          const toSide = targetSpec.inputPointer || targetSpec.inputSide || null;
+          const targetNode = getById(tid) || {};
+          const toSide = targetSpec.inputPointer || targetSpec.inputSide || targetNode.inputPointer || targetNode.inputSide || null;
           if (side || toSide) conns.push({ id: tid, fromSide: side || undefined, toSide });
           else conns.push(tid);
         });
@@ -805,6 +881,70 @@ class NodeUI {
       if (node && node.state !== 'disabled') return node.id;
     }
     return null;
+  }
+
+  // Disable a linear chain starting from a given node id following graph.next
+  _disableChainFrom(startId) {
+    try {
+      if (!this._ctx || !this._ctx.graph || !this._ctx.nodes) return;
+      const graph = this._ctx.graph;
+      const nodesRef = this._ctx.nodes;
+      const isMap = nodesRef && typeof nodesRef.get === 'function';
+      const getById = (id) => isMap ? nodesRef.get(id) : (Array.isArray(nodesRef) ? nodesRef.find(x => x && x.id === id) : null);
+      const seen = new Set();
+      let cur = startId;
+      while (cur && !seen.has(cur)) {
+        seen.add(cur);
+        const node = getById(cur);
+        if (node) {
+          node.state = 'disabled';
+          if (Array.isArray(node.connections)) node.connections = [];
+        }
+        const spec = graph[cur] || {};
+        if (typeof spec.next === 'string') cur = spec.next; else break;
+      }
+    } catch(e) { /* ignore */ }
+  }
+
+  // Enable a linear chain starting from a given node id following graph.next
+  _enableChainFrom(startId) {
+    try {
+      if (!this._ctx || !this._ctx.graph || !this._ctx.nodes) return;
+      const graph = this._ctx.graph;
+      const nodesRef = this._ctx.nodes;
+      const isMap = nodesRef && typeof nodesRef.get === 'function';
+      const getById = (id) => isMap ? nodesRef.get(id) : (Array.isArray(nodesRef) ? nodesRef.find(x => x && x.id === id) : null);
+      const seen = new Set();
+      let cur = startId;
+      while (cur && !seen.has(cur)) {
+        seen.add(cur);
+        const node = getById(cur);
+        if (node) node.state = 'enabled';
+        const spec = graph[cur] || {};
+        if (typeof spec.next === 'string') cur = spec.next; else break;
+      }
+    } catch(e) { /* ignore */ }
+  }
+
+  // Find upstream nodes that connect (per graph spec) into targetId
+  _getUpstreamsFor(targetId) {
+    try {
+      if (!this._ctx || !this._ctx.graph || !this._ctx.nodes) return [];
+      const graph = this._ctx.graph;
+      const nodesRef = this._ctx.nodes;
+      const isMap = nodesRef && typeof nodesRef.get === 'function';
+      const list = isMap ? Array.from(nodesRef.values()) : (Array.isArray(nodesRef) ? nodesRef : []);
+      const res = [];
+      list.forEach(n => {
+        if (!n) return;
+        const spec = graph[n.id] || {};
+        if (typeof spec.next === 'string' && this._trainBaseId(spec.next) === targetId) res.push(n);
+        if (spec.branch && typeof spec.branch === 'object') {
+          Object.values(spec.branch).forEach(v => { if (this._trainBaseId(v) === targetId) res.push(n); });
+        }
+      });
+      return res;
+    } catch(e) { return []; }
   }
 
   // Re-apply a new train and refresh
