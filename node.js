@@ -133,7 +133,7 @@ class NodeUI {
           }
         } else {
           // Recompute all connections from train for current enabled/disabled state
-          if (!option.graph) this._applyConnectionsFromTrain();
+          this._applyConnectionsFromTrain();
         }
         // Notify callback if present (after state changes)
         if (typeof onEnableChange === 'function') onEnableChange(n.id, nextEnabled);
@@ -271,13 +271,6 @@ class NodeUI {
       svg.setAttribute('class', 'connections-layer');
       inner.appendChild(svg);
     }
-    // Panels layer (behind nodes)
-    let panelsLayer = inner.querySelector('.panels-layer');
-    if (!panelsLayer) {
-      panelsLayer = document.createElement('div');
-      panelsLayer.className = 'panels-layer';
-      inner.appendChild(panelsLayer);
-    }
     let nodesLayer = inner.querySelector('.nodes-layer');
     if (!nodesLayer) {
       nodesLayer = document.createElement('div');
@@ -291,15 +284,15 @@ class NodeUI {
 
     // Optionally enable pan & zoom
     if (panZoomEnabled) this.enablePanZoom(wrapper, inner, { enabled: true });
-    return { wrapper, inner, svg, nodesLayer, panelsLayer };
+    return { wrapper, inner, svg, nodesLayer };
   }
 
   // Convenience: create canvas in a container and render nodes + connections.
   // Returns the created DOM references.
   renderInto(container, nodes, options = {}, canvasOptions = {}) {
-    const { svg, inner, nodesLayer, panelsLayer } = this.ensureCanvas(container, canvasOptions);
+    const { svg, inner, nodesLayer } = this.ensureCanvas(container, canvasOptions);
     this.rerender(nodesLayer, svg, inner, nodes, options);
-    return { svg, canvasInner: inner, nodesLayer, panelsLayer };
+    return { svg, canvasInner: inner, nodesLayer };
   }
 
   // Build helper: nodesUI.build(target, nodes, option)
@@ -324,7 +317,7 @@ class NodeUI {
     const panZoomEnabled = !!option.panZoomEnabled;
     const recordNodeEvent = option.recordNodeEvent;
 
-    const { wrapper, inner, svg, nodesLayer, panelsLayer } = this.ensureCanvas(mount, { width, height, panZoomEnabled });
+    const { wrapper, inner, svg, nodesLayer } = this.ensureCanvas(mount, { width, height, panZoomEnabled });
 
     // If state is provided, apply initial pan/scale
     if (option.state && typeof option.state === 'object') {
@@ -362,7 +355,7 @@ class NodeUI {
       option.dragEnabled !== false // default true unless explicitly false
     );
     // store context for future auto-renders
-    this._ctx = { wrapper, inner, svg, nodesLayer, panelsLayer, nodes, state: option.state || null, train: parsedTrain };
+    this._ctx = { wrapper, inner, svg, nodesLayer, nodes, state: option.state || null, train: parsedTrain };
     this._getRenderOptions = makeOptions;
     // Apply train-derived connections once before first render
     if (!option.graph) this._applyConnectionsFromTrain();
@@ -466,7 +459,6 @@ class NodeUI {
     path.setAttribute('stroke-width', '2');
     path.setAttribute('marker-end', 'url(#arrow)');
     svg.appendChild(path);
-    // Wider invisible hit path for better interaction
     const hit = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     hit.setAttribute('d', d);
     hit.setAttribute('fill', 'none');
@@ -488,14 +480,41 @@ class NodeUI {
     }
   }
 
-  _ensureArrowMarker(svg){ let defs=svg.querySelector('defs'); if(!defs){ defs=document.createElementNS('http://www.w3.org/2000/svg','defs'); svg.prepend(defs);} let marker=svg.querySelector('#arrow'); if(!marker){ marker=document.createElementNS('http://www.w3.org/2000/svg','marker'); marker.setAttribute('id','arrow'); marker.setAttribute('markerWidth','10'); marker.setAttribute('markerHeight','7'); marker.setAttribute('refX','9'); marker.setAttribute('refY','3.5'); marker.setAttribute('orient','auto'); const poly=document.createElementNS('http://www.w3.org/2000/svg','polygon'); poly.setAttribute('points','0 0, 10 3.5, 0 7'); poly.setAttribute('fill','var(--blue-600)'); marker.appendChild(poly); defs.appendChild(marker);} }
+  _ensureArrowMarker(svg) {
+    let defs = svg.querySelector('defs');
+    if (!defs) {
+      defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+      svg.prepend(defs);
+    }
+    let marker = svg.querySelector('#arrow');
+    if (!marker) {
+      marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+      marker.setAttribute('id', 'arrow');
+      marker.setAttribute('markerWidth', '10');
+      marker.setAttribute('markerHeight', '7');
+      marker.setAttribute('refX', '9');
+      marker.setAttribute('refY', '3.5');
+      marker.setAttribute('orient', 'auto');
+      const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+      poly.setAttribute('points', '0 0, 10 3.5, 0 7');
+      poly.setAttribute('fill', 'var(--blue-600)');
+      marker.appendChild(poly);
+      defs.appendChild(marker);
+    }
+  }
 
-  _nodeAnchor(id){ const el=document.querySelector(`[data-node-id="${id}"]`); if(!el) return {x:0,y:0}; const x=parseFloat(el.style.left)+el.offsetWidth/2; const y=parseFloat(el.style.top)+el.offsetHeight/2; return {x,y}; }
+  _nodeAnchor(id) {
+    const el = document.querySelector(`[data-node-id="${id}"]`);
+    if (!el) return { x: 0, y: 0 };
+    const x = parseFloat(el.style.left) + el.offsetWidth / 2;
+    const y = parseFloat(el.style.top) + el.offsetHeight / 2;
+    return { x, y };
+  }
 
-  _bezierPath(a,b){ return `M ${a.x} ${a.y} L ${b.x} ${b.y}`; }
-  // (optionSelector removed; not used)
+  _bezierPath(a, b) {
+    return `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
+  }
 
-  // Render a list of nodes (Map or Array) into a container
   renderNodes(container, nodes, {
     connectingFromId,
     getScale,
@@ -509,11 +528,9 @@ class NodeUI {
     const isMap = nodes && typeof nodes.get === 'function';
     const list = isMap ? Array.from(nodes.values()) : (Array.isArray(nodes) ? nodes : []);
     
-    // 1) Ø§Ø±Ø³Ù… Ø§Ù„Ù…Ø¬Ù…ÙˆØ¹Ø§Øª (Ø®Ù„ÙÙŠØ©)
     const groups = list.filter(n => n && n.type === 'group');
     groups.forEach(g => this._renderGroup(container, g));
 
-    // 2) Ø§Ø±Ø³Ù… Ø¨Ø§Ù‚ÙŠ Ø§Ù„Ø¹Ù‚Ø¯ ÙÙˆÙ‚Ù‡Ø§
     list.filter(n => n && n.type !== 'group').forEach(n => {
       const el = this.buildNodeElement(n, {
         onOpenConfig: n.openConfig,
@@ -561,55 +578,21 @@ class NodeUI {
   }
 
   // Re-apply a new train and refresh
-  applyTrain(chain, { refresh = true } = {}) {
+  applyTrain(chain, { refresh = true, useGraph = false } = {}) {
     if (!this._ctx) return;
     if (Array.isArray(chain)) this._ctx.train = chain.slice();
-    if (!option.graph) this._applyConnectionsFromTrain();
+    if (!useGraph) this._applyConnectionsFromTrain();
     if (refresh) this.refresh(this._getRenderOptions ? this._getRenderOptions() : undefined);
   }
   // (connect toggle handler removed; not used in current UI)
 
   // Convenience: render nodes and connections together
   rerender(container, svg, canvasInner, nodes, options = {}) {
-    // Render groups (behind nodes) when available
-    if (this._ctx && this._ctx.panelsLayer) this.renderGroups(this._ctx.panelsLayer, nodes);
     this.renderNodes(container, nodes, options);
     this.renderConnections(svg, canvasInner, nodes);
   }
 
-  // Draw group boxes behind nodes for items with type === 'group'
-  renderGroups(panelsLayer, nodes){
-    if (!panelsLayer) return;
-    while (panelsLayer.firstChild) panelsLayer.removeChild(panelsLayer.firstChild);
-    const isMap = nodes && typeof nodes.get === 'function';
-    const list = isMap ? Array.from(nodes.values()) : (Array.isArray(nodes) ? nodes : []);
-    list.forEach(n => {
-      if (!n || n.type !== 'group' || !n.size || !n.position) return;
-      const box = document.createElement('div');
-      box.className = 'group-box';
-      box.style.position = 'absolute';
-      box.style.left = (n.position.x || 0) + 'px';
-      box.style.top = (n.position.y || 0) + 'px';
-      box.style.width = (n.size.w || 0) + 'px';
-      box.style.height = (n.size.h || 0) + 'px';
-      box.style.border = '1px solid rgba(0,0,0,0.2)';
-      box.style.background = 'rgba(0,0,0,0.03)';
-      box.style.borderRadius = '8px';
-      if (n.label) {
-        const lbl = document.createElement('div');
-        lbl.textContent = n.label;
-        lbl.style.fontWeight = '600';
-        lbl.style.fontSize = '12px';
-        lbl.style.padding = '2px 6px';
-        lbl.style.position = 'absolute';
-        lbl.style.left = '4px';
-        lbl.style.top = '4px';
-        lbl.style.background = 'rgba(255,255,255,0.7)';
-        box.appendChild(lbl);
-      }
-      panelsLayer.appendChild(box);
-    });
-  }
+  // (panels-layer removed; groups are rendered within nodes layer)
 
   // (renderConnectionsAuto removed; not used by current app)
 
@@ -662,101 +645,8 @@ class NodeUI {
       <div class="group-body"></div>
     `;
 
-    // Ø³Ø­Ø¨ Ø§Ù„Ù…Ø¬Ù…ÙˆØ¹Ø© ÙŠØ­Ø±Ùƒ Ø¹Ù†Ø§ØµØ±Ù‡Ø§ Ø§Ù„Ù…Ù†ØªÙ…ÙŠØ© (groupId) Ø£Ùˆ Ø§Ù„ØªÙŠ ØªÙ‚Ø¹ Ø¯Ø§Ø®Ù„Ù‡Ø§
-    box.addEventListener('mousedown', (e)=>{
-      if (e.button !== 0) return;
-      const start = { x: e.clientX, y: e.clientY };
-      const orig = { x: parseFloat(box.style.left), y: parseFloat(box.style.top) };
-
-      const nodesRef = this._ctx?.nodes;
-      const isMap = nodesRef && typeof nodesRef.get === 'function';
-      const list = isMap ? Array.from(nodesRef.values()) : (Array.isArray(nodesRef) ? nodesRef : []);
-
-      // Ø£Ø¹Ø¶Ø§Ø¡ ÙØ¹Ù„ÙŠÙŠÙ†: Ø­Ø³Ø¨ groupId Ø£Ùˆ Ø¯Ø§Ø®Ù„ Ø­Ø¯ÙˆØ¯ Ø§Ù„ØµÙ†Ø¯ÙˆÙ‚
-      const groupNode = list.find(n => n?.id === box.dataset.groupId);
-      
-      // Ø§Ø­ØµÙ„ Ø¹Ù„Ù‰ Ø¬Ù…ÙŠØ¹ Ø§Ù„Ø¹Ù‚Ø¯ Ø§Ù„ØªØ§Ø¨Ø¹Ø© Ù…Ø¨Ø§Ø´Ø±Ø© + Ø§Ù„Ø¹Ù‚Ø¯ Ø§Ù„ØªÙŠ ØªÙ‚Ø¹ Ø¯Ø§Ø®Ù„ Ø­Ø¯ÙˆØ¯ Ø§Ù„Ù…Ø¬Ù…ÙˆØ¹Ø©
-      const directChildren = list.filter(n => n && n.type !== 'group' && n.groupId === groupNode.id);
-      const insideChildren = list.filter(n => n && n.type !== 'group' && this._isInsideGroup(n, groupNode));
-      
-      // Ø¯Ù…Ø¬ Ø§Ù„Ù‚Ø§Ø¦Ù…ØªÙŠÙ† ÙˆØ¥Ø²Ø§Ù„Ø© Ø§Ù„ØªÙƒØ±Ø§Ø±Ø§Øª
-      const children = [...new Set([...directChildren, ...insideChildren])];
-      
-      // Ø§Ø­ØµÙ„ Ø¹Ù„Ù‰ Ø¬Ù…ÙŠØ¹ Ø§Ù„Ù…Ø¬Ù…ÙˆØ¹Ø§Øª Ø§Ù„ÙØ±Ø¹ÙŠØ© Ø¯Ø§Ø®Ù„ Ù‡Ø°Ù‡ Ø§Ù„Ù…Ø¬Ù…ÙˆØ¹Ø©
-      const subGroups = list.filter(n => n && n.type === 'group' && this._isInsideGroup(n, groupNode));
-      
-      // Ø­ÙØ¸ Ø§Ù„Ù…ÙˆØ§Ù‚Ø¹ Ø§Ù„Ø£ØµÙ„ÙŠØ© Ù„Ù„Ø¹Ù‚Ø¯ ÙˆØ§Ù„Ù…Ø¬Ù…ÙˆØ¹Ø§Øª Ø§Ù„ÙØ±Ø¹ÙŠØ©
-      const originalPositions = children.map(c => ({
-        id: c.id,
-        x: c.position.x,
-        y: c.position.y
-      }));
-      
-      const originalGroupPositions = subGroups.map(g => ({
-        id: g.id,
-        x: g.position.x,
-        y: g.position.y
-      }));
-
-      const onMove = (ev)=>{
-        const scale = this.getScale?.() || 1;
-        const dx = (ev.clientX - start.x) / scale;
-        const dy = (ev.clientY - start.y) / scale;
-        const nx = Math.round(orig.x + dx), ny = Math.round(orig.y + dy);
-        box.style.left = nx + 'px'; box.style.top = ny + 'px';
-        groupNode.position.x = nx; groupNode.position.y = ny;
-
-        // Ø­Ø±Ù‘Ùƒ Ø§Ù„Ø£Ø·ÙØ§Ù„ Ø¨Ù†ÙØ³ Ø§Ù„Ø¥Ø²Ø§Ø­Ø© Ù…Ù† Ù…ÙˆØ§Ù‚Ø¹Ù‡Ù… Ø§Ù„Ø£ØµÙ„ÙŠØ©
-        children.forEach(c=>{
-          const original = originalPositions.find(p => p.id === c.id);
-          if (original) {
-            c.position.x = Math.round(original.x + dx);
-            c.position.y = Math.round(original.y + dy);
-            const el = this._ctx?.wrapper?.querySelector(`[data-node-id="${c.id}"]`);
-            if (el){
-              el.style.left = c.position.x + 'px';
-              el.style.top = c.position.y + 'px';
-            }
-          }
-        });
-        
-        // Ø­Ø±Ù‘Ùƒ Ø§Ù„Ù…Ø¬Ù…ÙˆØ¹Ø§Øª Ø§Ù„ÙØ±Ø¹ÙŠØ© ÙˆØ¹Ù†Ø§ØµØ±Ù‡Ø§
-        subGroups.forEach(g=>{
-          const originalGroup = originalGroupPositions.find(p => p.id === g.id);
-          if (originalGroup) {
-            g.position.x = Math.round(originalGroup.x + dx);
-            g.position.y = Math.round(originalGroup.y + dy);
-            const groupEl = this._ctx?.wrapper?.querySelector(`[data-group-id="${g.id}"]`);
-            if (groupEl){
-              groupEl.style.left = g.position.x + 'px';
-              groupEl.style.top = g.position.y + 'px';
-            }
-            
-            // Ø­Ø±Ù‘Ùƒ Ø¬Ù…ÙŠØ¹ Ø§Ù„Ø¹Ù†Ø§ØµØ± Ø¯Ø§Ø®Ù„ Ø§Ù„Ù…Ø¬Ù…ÙˆØ¹Ø© Ø§Ù„ÙØ±Ø¹ÙŠØ©
-            const subGroupChildren = list.filter(n => n && n.type !== 'group' &&
-              (n.groupId === g.id || this._isInsideGroup(n, g)));
-            
-            subGroupChildren.forEach(child=>{
-              const childOriginal = originalPositions.find(p => p.id === child.id);
-              if (childOriginal) {
-                child.position.x = Math.round(childOriginal.x + dx);
-                child.position.y = Math.round(childOriginal.y + dy);
-                const childEl = this._ctx?.wrapper?.querySelector(`[data-node-id="${child.id}"]`);
-                if (childEl){
-                  childEl.style.left = child.position.x + 'px';
-                  childEl.style.top = child.position.y + 'px';
-                }
-              }
-            });
-          }
-        });
-
-        this.renderConnections(this._ctx.svg, this._ctx.inner, this._ctx.nodes);
-      };
-      const onUp = ()=>{ document.removeEventListener('mousemove', onMove); };
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp, { once:true });
-    });
+    // Dragging the group moves its contained elements (by groupId or position)
+    box.addEventListener('mousedown', (e) => this._handleGroupDrag(e, box));
 
     container.appendChild(box);
     return box;
@@ -768,6 +658,108 @@ class NodeUI {
     const gw = group.size?.w || 300, gh = group.size?.h || 200;
     const nx = node.position.x, ny = node.position.y;
     return nx >= gx && nx <= gx+gw && ny >= gy && ny <= gy+gh;
+  }
+
+  // Handle group dragging functionality
+  _handleGroupDrag(e, box) {
+    if (e.button !== 0) return;
+    const start = { x: e.clientX, y: e.clientY };
+    const orig = { x: parseFloat(box.style.left), y: parseFloat(box.style.top) };
+
+    const nodesRef = this._ctx?.nodes;
+    const isMap = nodesRef && typeof nodesRef.get === 'function';
+    const list = isMap ? Array.from(nodesRef.values()) : (Array.isArray(nodesRef) ? nodesRef : []);
+
+    // Active members: by groupId or within box bounds
+    const groupNode = list.find(n => n?.id === box.dataset.groupId);
+    
+    // Get all directly attached nodes + nodes inside group bounds
+    const directChildren = list.filter(n => n && n.type !== 'group' && n.groupId === groupNode.id);
+    const insideChildren = list.filter(n => n && n.type !== 'group' && this._isInsideGroup(n, groupNode));
+    
+    // Merge lists and remove duplicates
+    const children = [...new Set([...directChildren, ...insideChildren])];
+    
+    // Get all sub-groups within this group
+    const subGroups = list.filter(n => n && n.type === 'group' && this._isInsideGroup(n, groupNode));
+    
+    // Store original positions for nodes and sub-groups
+    const originalPositions = children.map(c => ({
+      id: c.id,
+      x: c.position.x,
+      y: c.position.y
+    }));
+    
+    const originalGroupPositions = subGroups.map(g => ({
+      id: g.id,
+      x: g.position.x,
+      y: g.position.y
+    }));
+
+    const onMove = (ev) => {
+      const scale = this.getScale?.() || 1;
+      const dx = (ev.clientX - start.x) / scale;
+      const dy = (ev.clientY - start.y) / scale;
+      const nx = Math.round(orig.x + dx), ny = Math.round(orig.y + dy);
+      box.style.left = nx + 'px';
+      box.style.top = ny + 'px';
+      groupNode.position.x = nx;
+      groupNode.position.y = ny;
+
+      // Move children by the same offset from their original positions
+      children.forEach(c => {
+        const original = originalPositions.find(p => p.id === c.id);
+        if (original) {
+          c.position.x = Math.round(original.x + dx);
+          c.position.y = Math.round(original.y + dy);
+          const el = this._ctx?.wrapper?.querySelector(`[data-node-id="${c.id}"]`);
+          if (el) {
+            el.style.left = c.position.x + 'px';
+            el.style.top = c.position.y + 'px';
+          }
+        }
+      });
+      
+      // Move sub-groups and their elements
+      subGroups.forEach(g => {
+        const originalGroup = originalGroupPositions.find(p => p.id === g.id);
+        if (originalGroup) {
+          g.position.x = Math.round(originalGroup.x + dx);
+          g.position.y = Math.round(originalGroup.y + dy);
+          const groupEl = this._ctx?.wrapper?.querySelector(`[data-group-id="${g.id}"]`);
+          if (groupEl) {
+            groupEl.style.left = g.position.x + 'px';
+            groupEl.style.top = g.position.y + 'px';
+          }
+          
+          // Move all elements inside the sub-group
+          const subGroupChildren = list.filter(n => n && n.type !== 'group' &&
+            (n.groupId === g.id || this._isInsideGroup(n, g)));
+          
+          subGroupChildren.forEach(child => {
+            const childOriginal = originalPositions.find(p => p.id === child.id);
+            if (childOriginal) {
+              child.position.x = Math.round(childOriginal.x + dx);
+              child.position.y = Math.round(childOriginal.y + dy);
+              const childEl = this._ctx?.wrapper?.querySelector(`[data-node-id="${child.id}"]`);
+              if (childEl) {
+                childEl.style.left = child.position.x + 'px';
+                childEl.style.top = child.position.y + 'px';
+              }
+            }
+          });
+        }
+      });
+
+      this.renderConnections(this._ctx.svg, this._ctx.inner, this._ctx.nodes);
+    };
+    
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+    };
+    
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp, { once: true });
   }
 }
 
