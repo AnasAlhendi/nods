@@ -1,70 +1,97 @@
 // App script (classic). NodeUI is available as a global from node.js.
 
-// Canvas stadokte
-const state = {
+// Canvas state for the main diagram
+const diagramState = {
   scale: 1,
   pan: { x: 0, y: 0 },
   connectingFrom: null,
 };
 
-// (node event recording removed)
-
-// Data model (array of nodes)
-const nodes = [
-  { id: 'start', label: 'Sprachauswahl', tag: '(Start)',  state: 'enabled', position: { x: 160,  y: 220 },
-    openConfig:   (id) => {},
-    openHelp:     (id) => {},
-    openEdit:     (id) => {},
-    onChangeCheckbox: (id, enabled) => {},
+// --- البيانات الرئيسية للوحة الرسم ---
+const diagramNodes = [
+  {
+    id: 'start',
+    category: 'Start',
+    label: 'Sprachauswahl',
+    tag: '(Start)',
+    state: 'enabled',
+    loc: '160 220',
+    connections: [ { to: 'menu', routing: 'orthogonal' } ],
+    openConfig: (id) => {}, openHelp: (id) => {}, openEdit: (id) => {}, onChangeCheckbox: (id, enabled) => {},
   },
-  { id: 'menu',  label: 'Menu00FC',       tag: '(Weiter)', state: 'enabled', position: { x: 1040, y: 300 },
-    openConfig:   (id) => {},
-    openHelp:     (id) => {},
-    openEdit:     (id) => {},
-    onChangeCheckbox: (id, enabled) => {},
+  {
+    id: 'menu',
+    category: 'Conditional',
+    label: 'Menu?',
+    state: 'enabled',
+    loc: '440 220',
+    connections: [
+      { to: 'help', routing: 'orthogonal', text: 'Yes' },
+      { to: 'end', routing: 'orthogonal', text: 'No' }
+    ],
   },
-  { id: 'help',  label: 'Hilfe',          tag: '',        state: 'warning', position: { x: 240,  y: 640 },
-    openConfig:   (id) => {},
-    openHelp:     (id) => {},
-    openEdit:     (id) => {},
-    onChangeCheckbox: (id, enabled) => {},
+  {
+    id: 'help',
+    label: 'Hilfe',
+    state: 'enabled',
+    loc: '440 400',
+    connections: [ { to: 'end' } ],
   },
-  { id: 'end',   label: 'Beenden',        tag: '',        state: 'disabled', position: { x: 1480, y: 720 },
-    openConfig:   (id) => { console.log(id)},
-    openHelp:     (id) => {},
-    openEdit:     (id) => {},
-    onChangeCheckbox: (id, enabled) => {},
+  {
+    id: 'end',
+    category: 'End',
+    label: 'Beenden',
+    state: 'enabled',
+    loc: '780 220',
+    connections: [],
   },
+  {
+    id: 'comment-1',
+    category: 'Comment',
+    text: 'This is a comment node.',
+    loc: '160 400',
+    connections: [],
+  }
 ];
 
+/*
+// --- بيانات لوحة الأدوات (Palette) ---
+// *** تم التعليق على هذا الجزء بالكامل لحذفه ***
+const paletteNodes = [
+  { category: 'Start', label: 'Start' },
+  { label: 'Step' },
+  { category: 'Conditional', label: '???' },
+  { category: 'End', label: 'End' },
+  { category: 'Comment', text: 'Comment' }
+];
+*/
 
-// Create canvas structure and render via NodeUI.build
-const nodesUI = new NodeUI();
-const targetContainer = '.canvas-container';
-nodesUI.build(targetContainer, nodes, {
+
+// =============================================================
+// === تهيئة لوحة الرسم الرئيسية فقط ===
+// =============================================================
+
+// إنشاء نسخة من NodeUI للوحة الرسم
+const diagramUI = new NodeUI();
+
+// 1. إعداد لوحة الرسم الرئيسية (Diagram)
+const diagramContainer = '#myDiagramDiv';
+diagramUI.build(diagramContainer, diagramNodes, {
   width: 2000,
   height: 1200,
   panZoomEnabled: true,
-  state: state,
-  connection: ["start","menu","help"]
+  state: diagramState,
 });
 
-// Header buttons (without optional chaining for wider browser support)
+
+
+// Header buttons
 var btnSettings = document.getElementById('btnSettings');
-if (btnSettings) btnSettings.addEventListener('click', function () { openSettings(); });
+if (btnSettings) btnSettings.addEventListener('click', function () { /* openSettings(); */ });
 var btnRun = document.getElementById('btnRun');
-if (btnRun) btnRun.addEventListener('click', function () { runSimulation(nodes); });
+if (btnRun) btnRun.addEventListener('click', function () { /* runSimulation(nodes); */ });
 var btnSave = document.getElementById('btnSave');
-if (btnSave) btnSave.addEventListener('click', function () { openModal('Speichern', saveDesign(nodes)); });
+if (btnSave) btnSave.addEventListener('click', function () { /* openModal('Speichern', saveDesign(nodes)); */ });
 
 // Modal helpers
-const modal     = document.getElementById('modal');
-const modalBody = document.getElementById('modalBody');
-const modalTitle= document.getElementById('modalTitle');
-modal.addEventListener('click', (e) => {
-  if (e.target.matches('[data-modal-close], .modal-backdrop')) closeModal();
-});
-function openModal(title, contentNode) { modalTitle.textContent = title; modalBody.innerHTML = ''; if (contentNode) modalBody.appendChild(contentNode); modal.setAttribute('aria-hidden', 'false'); }
-function closeModal() { modal.setAttribute('aria-hidden', 'true'); }
-
-// getNode moved into NodeUI (nodesUI.getNode)
+// ... (لا تغيير هنا)
