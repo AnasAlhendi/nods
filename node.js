@@ -245,6 +245,8 @@ class NodeUI {
     }
 
     this._ctx = { wrapper, inner, svg, nodesLayer, nodes, state: option.state || null };
+    // Feature flags / options
+    this._ctx.lineControlsEnabled = !!option.lineControlsEnabled;
     this._getRenderOptions = () => option.renderOptions || this.defaultRenderOptions(
         this._ctx.state, svg, inner, this._ctx.nodes
     );
@@ -372,8 +374,17 @@ class NodeUI {
           b.y -= Math.sin(angle) * conn.toShortLength;
         }
 
+        const hasManualPoints = Array.isArray(conn.points) && conn.points.length > 0;
+        const buildPathWithPoints = (start, end, points) => {
+          const pts = [start, ...points, end];
+          return pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+        };
+        const d = hasManualPoints
+          ? buildPathWithPoints(a, b, conn.points)
+          : this._drawPath(a, b, conn.routing || 'bezier', n.id, t.id);
+
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        path.setAttribute('d', this._drawPath(a, b, conn.routing || 'bezier', n.id, t.id));
+        path.setAttribute('d', d);
         path.setAttribute('fill', 'none');
         path.setAttribute('stroke', conn.color || '#3b82f6');
         path.setAttribute('stroke-width', conn.strokeWidth || '2');
@@ -400,6 +411,81 @@ class NodeUI {
               svg.appendChild(text);
             }
           }, 0);
+        }
+
+        // Draw.io-like line control: only when enabled via option
+        const showHandles = !!(this._ctx && this._ctx.lineControlsEnabled);
+        if (showHandles) {
+          const makeHandle = (cx, cy, cls) => {
+            const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            c.setAttribute('cx', cx);
+            c.setAttribute('cy', cy);
+            c.setAttribute('r', cls === 'edge-mid-handle' ? 4 : 5);
+            c.setAttribute('class', cls);
+            svg.appendChild(c);
+            return c;
+          };
+          const toCanvas = (clientX, clientY) => {
+            const rect = canvasInner.getBoundingClientRect();
+            const scale = this.getScale();
+            const pan = this.getPan();
+            return {
+              x: (clientX - rect.left - pan.x) / scale,
+              y: (clientY - rect.top - pan.y) / scale,
+            };
+          };
+
+          // Existing bends: draggable circles
+          if (hasManualPoints) {
+            conn.points.forEach((p, idx) => {
+              const h = makeHandle(p.x, p.y, 'edge-handle');
+              let dragging = false;
+              const onMove = (ev) => {
+                if (!dragging) return;
+                const pos = toCanvas(ev.clientX, ev.clientY);
+                p.x = Math.round(pos.x);
+                p.y = Math.round(pos.y);
+                h.setAttribute('cx', p.x);
+                h.setAttribute('cy', p.y);
+                path.setAttribute('d', buildPathWithPoints(a, b, conn.points));
+              };
+              const onUp = () => {
+                dragging = false;
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+                this.renderConnections(svg, canvasInner, nodes);
+              };
+              h.addEventListener('mousedown', (ev) => {
+                ev.stopPropagation();
+                dragging = true;
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp, { once: true });
+              });
+              h.addEventListener('dblclick', (ev) => {
+                ev.stopPropagation();
+                conn.points.splice(idx, 1);
+                this.renderConnections(svg, canvasInner, nodes);
+              });
+            });
+          }
+
+          // Insert handles at midpoints between consecutive route points
+          const routePts = [a, ...(hasManualPoints ? conn.points : []), b];
+          if (routePts.length >= 2) {
+            for (let i = 0; i < routePts.length - 1; i++) {
+              const p1 = routePts[i], p2 = routePts[i+1];
+              const mx = (p1.x + p2.x) / 2;
+              const my = (p1.y + p2.y) / 2;
+              const insertIndex = Math.min(i, (conn.points ? conn.points.length : 0));
+              const midH = makeHandle(mx, my, 'edge-mid-handle');
+              midH.addEventListener('mousedown', (ev) => {
+                ev.stopPropagation();
+                if (!Array.isArray(conn.points)) conn.points = [];
+                conn.points.splice(insertIndex, 0, { x: Math.round(mx), y: Math.round(my) });
+                this.renderConnections(svg, canvasInner, nodes);
+              });
+            }
+          }
         }
       });
     });

@@ -7,6 +7,9 @@ const diagramState = {
   connectingFrom: null,
 };
 
+// Toggle: enable/disable draw.io-like line controls (bend handles)
+const enableLineControls = true; // set to false to hide edge handles
+
 // --- البيانات الرئيسية للوحة الرسم ---
 const diagramNodes = [
   {
@@ -75,12 +78,13 @@ const paletteNodes = [
 const diagramUI = new NodeUI();
 
 // 1. إعداد لوحة الرسم الرئيسية (Diagram)
-const diagramContainer = '#myDiagramDiv';
+const diagramContainer = '.canvas-container';
 diagramUI.build(diagramContainer, diagramNodes, {
   width: 2000,
   height: 1200,
   panZoomEnabled: true,
   state: diagramState,
+  lineControlsEnabled: enableLineControls,
 });
 
 

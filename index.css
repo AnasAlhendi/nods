@@ -109,6 +109,16 @@ body {
   pointer-events: none;
 }
 
+/* Edge control handles (override pointer-events for interactivity) */
+.connections-layer .edge-handle,
+.connections-layer .edge-mid-handle {
+  pointer-events: all;
+}
+
+/* Visuals for edge handles */
+.edge-handle { fill: #1e5ea8; stroke: #ffffff; stroke-width: 1.5px; cursor: move; }
+.edge-mid-handle { fill: #ffffff; stroke: #1e5ea8; stroke-width: 1.5px; cursor: pointer; }
+
 /* Modal */
 .modal { position: fixed; inset: 0; display: none; }
 .modal[aria-hidden="false"] { display: block; }
