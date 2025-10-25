@@ -109,8 +109,9 @@ if (btnHandles) {
   });
 }
 
-// Checkbox callback left empty by default; app may override per node
-diagramNodes.forEach(function (n) { if (typeof n.onChangeCheckbox !== 'function') { n.onChangeCheckbox = function () {}; } });
+// Checkbox: you can still add onChangeNode(checked) per node; NodeUI will call it
+
+// (Agent code removed; behavior lives inside node.js NodeUI)
 
 // Modal helpers
 // ... (لا تغيير هنا)

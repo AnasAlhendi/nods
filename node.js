@@ -139,6 +139,7 @@ class NodeRenderer {
         onOpenEdit,
         onOpenHelp,
         onEnableChange,
+        onCheckboxToggle,
         dragEnabled = false,
         onPositionChange,
         onDragStart,
@@ -167,11 +168,15 @@ class NodeRenderer {
         const helpCfg = Object.assign({visible: true, disabled: false}, controls.helpButton || {});
         if (enableCfg.visible) {
             const enable = h('label', {className: 'enable-toggle', title: 'Aktivieren/Deaktivieren'});
-            const cb = h('input', {type: 'checkbox', checked: n.state !== 'disabled'});
+            const initialChecked = (this._checked && this._checked.has(n.id))
+                ? !!this._checked.get(n.id)
+                : (typeof n.checked === 'boolean' ? !!n.checked : (n.state !== 'disabled'));
+            const cb = h('input', {type: 'checkbox', checked: initialChecked});
             if (enableCfg.disabled) cb.disabled = true;
             cb.addEventListener('click', (ev) => {
                 ev.stopPropagation();
                 // Do not change internal node state here; delegate behavior to app via callback
+                if (typeof onCheckboxToggle === 'function') onCheckboxToggle(n.id, !!cb.checked, n);
                 if (typeof onEnableChange === 'function') onEnableChange(n.id, !!cb.checked);
             });
             enable.appendChild(cb);
@@ -248,6 +253,7 @@ class NodeRenderer {
                 onOpenEdit: n.openEdit,
                 onOpenHelp: n.openHelp,
                 onEnableChange: n.onChangeCheckbox,
+                onCheckboxToggle: options.onCheckboxToggle,
                 dragEnabled: true,
                 getScale: options.getScale,
                 onPositionChange: options.onPositionChange,
@@ -462,6 +468,9 @@ class NodeUI {
         this.edges = new EdgeRenderer(this.g, this.canvas, this.handles);
         this._ctx = null;
         this._getRenderOptions = null;
+        this._orig = new Map(); // id -> { out, incoming(map) }
+        this._bypass = []; // { from, to, of }
+        this._checked = new Map(); // id -> bool
     }
 
     ensureCanvas(container, {width = 2000, height = 1200, panZoomEnabled = false} = {}) {
@@ -515,8 +524,264 @@ class NodeUI {
             lineControlsEnabled: !!option.lineControlsEnabled
         };
         this._getRenderOptions = () => option.renderOptions || this.defaultRenderOptions(this._ctx.state, svg, inner, this._ctx.nodes);
+        // Apply initialization nodeStates
+        if (option && Array.isArray(option.nodeStates)) {
+            this.applyNodeStates(option.nodeStates);
+        }
         this.rerender(nodesLayer, svg, inner, nodes, this._getRenderOptions());
         return {wrapper, inner, svg, nodesLayer};
+    }
+
+    // --- Node behavior helpers (from test.md) ---
+    _getNodeById(id) {
+        const nlist = this._ctx ? this._ctx.nodes : [];
+        return Array.isArray(nlist) ? nlist.find(n => n && n.id === id) : null;
+    }
+
+    _outgoingOf(id) {
+        const n = this._getNodeById(id);
+        return (n && Array.isArray(n.connections)) ? n.connections.map(c => c.to) : [];
+    }
+
+    _incomingOf(id) {
+        const res = [];
+        const list = this._ctx ? this._ctx.nodes : [];
+        (Array.isArray(list) ? list : []).forEach(n => {
+            if (n && Array.isArray(n.connections) && n.connections.some(c => c && c.to === id)) {
+                res.push(n.id);
+            }
+        });
+        return res;
+    }
+
+    _saveOriginalEdges(id) {
+        if (this._orig.has(id)) return;
+        const n = this._getNodeById(id);
+        if (!n) return;
+        const out = Array.isArray(n.connections) ? JSON.parse(JSON.stringify(n.connections)) : [];
+        const incoming = new Map();
+        const list = this._ctx ? this._ctx.nodes : [];
+        (Array.isArray(list) ? list : []).forEach(src => {
+            if (!src || !Array.isArray(src.connections)) return;
+            const l = src.connections.filter(c => c && c.to === id);
+            if (l.length) incoming.set(src.id, JSON.parse(JSON.stringify(l)));
+        });
+        this._orig.set(id, {out, incoming});
+    }
+
+    _restoreOriginalEdges(id) {
+        const snap = this._orig.get(id);
+        if (!snap) return;
+        const n = this._getNodeById(id);
+        if (n) {
+            n.connections = JSON.parse(JSON.stringify(snap.out));
+        }
+        const list = this._ctx ? this._ctx.nodes : [];
+        const agent = this;
+        snap.incoming.forEach((l, srcId) => {
+            const src = agent._getNodeById(srcId);
+            if (!src) return;
+            src.connections = (src.connections || []).filter(c => c && c.to !== id);
+            l.forEach(c => { src.connections.push(JSON.parse(JSON.stringify(c))); });
+        });
+        this._orig.delete(id);
+    }
+
+    _removeBypassFor(id) {
+        const keep = [];
+        for (let i = 0; i < this._bypass.length; i++) {
+            const bp = this._bypass[i];
+            if (bp.of === id) {
+                const src = this._getNodeById(bp.from);
+                if (src && Array.isArray(src.connections)) {
+                    src.connections = src.connections.filter(c => !(c && c.to === bp.to && c._tempBypass === true && c._of === id));
+                }
+            } else keep.push(bp);
+        }
+        this._bypass = keep;
+    }
+
+    _setDisabledClass(id, on, transparent) {
+        const apply = () => {
+            const el = document.querySelector('[data-node-id="' + id + '"]');
+            if (!el) {
+                requestAnimationFrame(apply);
+                return;
+            }
+            if (on) {
+                el.classList.add('disabled');
+                if (transparent === false) el.classList.add('not-transparent'); else el.classList.remove('not-transparent');
+            } else {
+                el.classList.remove('disabled');
+                el.classList.remove('not-transparent');
+            }
+        };
+        requestAnimationFrame(apply);
+    }
+
+    enableNode(id) {
+        const n = this._getNodeById(id);
+        if (!n) return;
+        n.state = 'enabled';
+        this._removeBypassFor(id);
+        this._restoreOriginalEdges(id);
+        this._setDisabledClass(id, false, true);
+    }
+
+    disableNode(id, options) {
+        const opts = Object.assign({
+            detach: true,
+            bypass: true,
+            transparent: true
+        }, options || {});
+        const n = this._getNodeById(id);
+        if (!n) return;
+        n.state = 'disabled';
+        this._removeBypassFor(id);
+        this._saveOriginalEdges(id);
+        const outs = this._outgoingOf(id);
+        const ins = this._incomingOf(id);
+        if (opts.detach) {
+            n.connections = [];
+            const list = this._ctx ? this._ctx.nodes : [];
+            (Array.isArray(list) ? list : []).forEach(src => {
+                if (!src || !Array.isArray(src.connections)) return;
+                src.connections = src.connections.filter(c => c && c.to !== id);
+            });
+        }
+        if (opts.bypass) {
+            ins.forEach(srcId => {
+                const src = this._getNodeById(srcId);
+                if (!src) return;
+                if (!Array.isArray(src.connections)) src.connections = [];
+                outs.forEach(toId => {
+                    if (srcId === toId) return;
+                    const exists = src.connections.some(c => c && c.to === toId && c._tempBypass === true && c._of === id);
+                    if (!exists) {
+                        src.connections.push({to: toId, dashed: true, _tempBypass: true, _of: id});
+                        this._bypass.push({from: srcId, to: toId, of: id});
+                    }
+                });
+            });
+        }
+        this._setDisabledClass(id, true, !!opts.transparent);
+    }
+
+    _contextFor(current) {
+        const self = this;
+
+        function makeChain(ids) {
+            return {
+                enable() {
+                    ids.forEach(i => self.enableNode(i));
+                    return this;
+                }, disable(opts) {
+                    ids.forEach(i => self.disableNode(i, opts));
+                    return this;
+                }, rename(label) {
+                    ids.forEach(i => {
+                        const n = self._getNodeById(i);
+                        if (n) n.label = label;
+                    });
+                    return this;
+                }, get next() {
+                    let out = [];
+                    ids.forEach(i => { out = out.concat(self._outgoingOf(i)); });
+                    return makeChain(Array.from(new Set(out)));
+                }, get prev() {
+                    let inc = [];
+                    ids.forEach(i => { inc = inc.concat(self._incomingOf(i)); });
+                    return makeChain(Array.from(new Set(inc)));
+                }, to(target) {
+                    const acc = new Set();
+                    ids.forEach(start => {
+                        const q = [start], vis = new Set([start]), parent = {};
+                        let found = null;
+                        while (q.length) {
+                            const u = q.shift();
+                            if (u === target) {
+                                found = u;
+                                break;
+                            }
+                            self._outgoingOf(u).forEach(v => {
+                                if (!vis.has(v)) {
+                                    vis.add(v);
+                                    parent[v] = u;
+                                    q.push(v);
+                                }
+                            });
+                        }
+                        if (found) {
+                            let cur = found;
+                            acc.add(cur);
+                            while (parent[cur]) {
+                                cur = parent[cur];
+                                acc.add(cur);
+                            }
+                        }
+                    });
+                    acc.delete(undefined);
+                    acc.delete(null);
+                    return makeChain(Array.from(acc));
+                }
+            };
+        }
+
+        return {
+            getChecked() { return !!self._checked.get(current.id); },
+            setChecked(b) {
+                const prev = self._checked.get(current.id);
+                if (prev === !!b) return;
+                self._checked.set(current.id, !!b);
+                if (typeof current.onChangeNode === 'function') {
+                    current.onChangeNode.call(self._contextFor(current), !!b);
+                }
+            },
+            enable() { self.enableNode(current.id); },
+            disable(opts) { self.disableNode(current.id, opts); },
+            rename(label) { current.label = label; },
+            renameNode(id, label) {
+                const n = self._getNodeById(id);
+                if (n) n.label = label;
+            },
+            setState(id, st) { if (st === 'enabled') self.enableNode(id); else if (st === 'disabled') self.disableNode(id); },
+            get next() { return makeChain(self._outgoingOf(current.id)); },
+            get prev() { return makeChain(self._incomingOf(current.id)); },
+            to(targetId) { return makeChain([current.id]).to(targetId); }
+        };
+    }
+
+    _onCheckboxToggle(id, checked) {
+        this._checked.set(id, !!checked);
+        const n = this._getNodeById(id);
+        if (n && typeof n.onChangeNode === 'function') {
+            n.onChangeNode.call(this._contextFor(n), !!checked);
+        } else {
+            if (checked) this.enableNode(id); else this.disableNode(id);
+        }
+        this.refresh();
+    }
+
+    applyNodeStates(nodeStates) {
+        if (!Array.isArray(nodeStates)) return;
+        nodeStates.forEach(s => {
+            const parts = String(s).split('::');
+            if (parts.length !== 2) return;
+            const id = parts[0];
+            const val = parts[1].toLowerCase();
+            const n = this._getNodeById(id);
+            if (!n) return;
+            if (val === 'checked' || val === 'unchecked') {
+                const next = (val === 'checked');
+                const prev = this._checked.get(id);
+                this._checked.set(id, next);
+                if (prev !== next && typeof n.onChangeNode === 'function') {
+                    n.onChangeNode.call(this._contextFor(n), next);
+                }
+            } else if (val === 'enabled' || val === 'disabled') {
+                if (val === 'enabled') this.enableNode(id); else this.disableNode(id);
+            }
+        });
     }
 
     setLineControlsEnabled(flag) {
@@ -552,7 +817,8 @@ class NodeUI {
                 connectToggle: {visible: false},
                 editButton: {visible: true},
                 helpButton: {visible: true}
-            }
+            },
+            onCheckboxToggle: (id, checked) => { this._onCheckboxToggle(id, checked); }
         };
     }
 }

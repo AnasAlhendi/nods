@@ -157,6 +157,21 @@ body {
   color: #607d8b;
   opacity: 0.9;
   cursor: default;
+  pointer-events: none;
+}
+.node-js.disabled .option-js .enable-toggle,
+.node-js.disabled .option-js .enable-toggle input {
+  pointer-events: auto;
+  position: relative;
+  z-index: 2;
+}
+
+/* When we want read-only but without transparency */
+.node-js.disabled.not-transparent .option-js {
+  background: #ffffff;
+  border-color: #1e5ea8;
+  color: #1f2937;
+  opacity: 1;
 }
 
 /* Node pill */
