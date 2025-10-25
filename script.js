@@ -8,7 +8,7 @@ const diagramState = {
 };
 
 // Toggle: enable/disable draw.io-like line controls (bend handles)
-const enableLineControls = true; // set to false to hide edge handles
+let enableLineControls = true; // toggle at runtime via header button
 
 // --- البيانات الرئيسية للوحة الرسم ---
 const diagramNodes = [
@@ -19,7 +19,7 @@ const diagramNodes = [
     tag: '(Start)',
     state: 'enabled',
     loc: '160 220',
-    connections: [ { to: 'menu', routing: 'orthogonal' } ],
+    connections: [ { to: 'menu' } ],
     openConfig: (id) => {}, openHelp: (id) => {}, openEdit: (id) => {}, onChangeCheckbox: (id, enabled) => {},
   },
   {
@@ -29,8 +29,8 @@ const diagramNodes = [
     state: 'enabled',
     loc: '440 220',
     connections: [
-      { to: 'help', routing: 'orthogonal', text: 'Yes' },
-      { to: 'end', routing: 'orthogonal', text: 'No' }
+      { to: 'help', text: 'Yes' },
+      { to: 'end', text: 'No' }
     ],
   },
   {
@@ -56,6 +56,8 @@ const diagramNodes = [
     connections: [],
   }
 ];
+
+// (Behavior rules removed per user request — checkbox toggles remain app-level hooks)
 
 /*
 // --- بيانات لوحة الأدوات (Palette) ---
@@ -96,6 +98,19 @@ var btnRun = document.getElementById('btnRun');
 if (btnRun) btnRun.addEventListener('click', function () { /* runSimulation(nodes); */ });
 var btnSave = document.getElementById('btnSave');
 if (btnSave) btnSave.addEventListener('click', function () { /* openModal('Speichern', saveDesign(nodes)); */ });
+
+// Toggle edge handles (line controls)
+var btnHandles = document.getElementById('btnHandles');
+if (btnHandles) {
+  btnHandles.addEventListener('click', function () {
+    enableLineControls = !enableLineControls;
+    btnHandles.setAttribute('aria-pressed', String(enableLineControls));
+    try { diagramUI.setLineControlsEnabled(enableLineControls); } catch (e) {}
+  });
+}
+
+// Checkbox callback left empty by default; app may override per node
+diagramNodes.forEach(function (n) { if (typeof n.onChangeCheckbox !== 'function') { n.onChangeCheckbox = function () {}; } });
 
 // Modal helpers
 // ... (لا تغيير هنا)

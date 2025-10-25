@@ -50,6 +50,7 @@ body {
 }
 .icon-btn:hover { background: rgba(255,255,255,0.08); }
 .icon-btn:focus-visible { outline: 2px solid var(--blue-600); outline-offset: 2px; }
+.icon-btn[aria-pressed="true"] { background: rgba(255,255,255,0.16); }
 
 /* === الأنماط الهيكلية الجديدة === */
 /* Main Content Area (Palette + Canvas) */

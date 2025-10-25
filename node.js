@@ -149,7 +149,7 @@ class NodeRenderer {
         const container = h('div', {className: 'node-js'});
         if (n.category) container.classList.add(`node-category-${n.category.toLowerCase()}`);
         const pos = this.g.parsePoint(n.loc);
-        if (n.state === 'disabled') container.classList.add('disabled');
+        // No disabled class coupling; checkbox is purely informational unless app hooks it
         Object.assign(container.style, {left: pos.x + 'px', top: pos.y + 'px'});
         container.setAttribute('data-node-id', n.id);
         container.title = `${n.label || n.text || ''} ${n.tag || ''}`.trim();
@@ -158,7 +158,7 @@ class NodeRenderer {
             tabindex: '0',
             'aria-label': `${n.label || n.text || ''} ${n.tag || ''}`.trim()
         });
-        if (n.state === 'disabled') option.setAttribute('aria-disabled', 'true');
+        // Do not set aria-disabled based on state; app can control aria via callbacks if needed
         const label = h('span', {className: 'label'});
         label.innerHTML = escapeHtml(n.label || n.text || '') + (n.tag ? ` <span class="tag">${escapeHtml(n.tag)}</span>` : '');
         const actions = h('span', {className: 'actions'});
@@ -171,8 +171,8 @@ class NodeRenderer {
             if (enableCfg.disabled) cb.disabled = true;
             cb.addEventListener('click', (ev) => {
                 ev.stopPropagation();
-                n.state = cb.checked ? 'enabled' : 'disabled';
-                if (typeof onEnableChange === 'function') onEnableChange(n.id, n.state === 'enabled');
+                // Do not change internal node state here; delegate behavior to app via callback
+                if (typeof onEnableChange === 'function') onEnableChange(n.id, !!cb.checked);
             });
             enable.appendChild(cb);
             option.appendChild(enable);
@@ -181,7 +181,7 @@ class NodeRenderer {
         if (editCfg.visible) {
             const btn = h('button', {className: 'mini-btn', title: 'Bearbeiten'});
             btn.innerHTML = NodeUI.ICONS.edit;
-            if (editCfg.disabled || n.state === 'disabled') btn.disabled = true;
+            if (editCfg.disabled) btn.disabled = true;
             btn.addEventListener('click', (ev) => {
                 ev.stopPropagation();
                 onOpenEdit && onOpenEdit(n.id);
@@ -191,7 +191,7 @@ class NodeRenderer {
         if (helpCfg.visible) {
             const btn = h('button', {className: 'mini-btn', title: 'Hilfe'});
             btn.innerHTML = NodeUI.ICONS.help;
-            if (helpCfg.disabled || n.state === 'disabled') btn.disabled = true;
+            if (helpCfg.disabled) btn.disabled = true;
             btn.addEventListener('click', (ev) => {
                 ev.stopPropagation();
                 onOpenHelp && onOpenHelp(n.id);
@@ -211,7 +211,7 @@ class NodeRenderer {
         if (dragEnabled) {
             const getScaleSafe = typeof getScale === 'function' ? getScale : () => 1;
             const onDown = (e) => {
-                if (e.button !== 0 || n.state === 'disabled') return;
+                if (e.button !== 0) return;
                 const start = {x: e.clientX, y: e.clientY};
                 const orig = this.g.parsePoint(n.loc);
                 const onMove = (ev) => {
@@ -374,64 +374,15 @@ class EdgeRenderer {
         }
     }
 
-    _bezier(a, b) {
-        const dx = Math.max(60, Math.abs(b.x - a.x) * 0.4);
-        return `M ${a.x} ${a.y} C ${a.x + dx} ${a.y}, ${b.x - dx} ${b.y}, ${b.x} ${b.y}`;
-    }
-
     _orth(a, b) {
         const dx = b.x - a.x;
         const midX = a.x + dx / 2;
         return `M ${a.x} ${a.y} L ${midX} ${a.y} L ${midX} ${b.y} L ${b.x} ${b.y}`;
     }
 
-    _avoids(a, b, fromId, toId) {
-        const list = Array.isArray(this._nodes) ? this._nodes : [];
-        const obs = [];
-        list.forEach(nd => {
-            if (nd.id !== fromId && nd.id !== toId) {
-                const el = document.querySelector(`[data-node-id="${nd.id}"]`);
-                if (el) {
-                    const pos = this.g.parsePoint(el.style.left.replace('px', '') + ' ' + el.style.top.replace('px', ''));
-                    obs.push({x: pos.x, y: pos.y, width: el.offsetWidth, height: el.offsetHeight});
-                }
-            }
-        });
-        const midX = (a.x + b.x) / 2;
-        let pts = [a, {x: midX, y: a.y}, {x: midX, y: b.y}, b];
-        const vseg = {p1: pts[1], p2: pts[2]};
-        const intersects = (p1, p2, r) => {
-            const minX = r.x, maxX = r.x + r.width, minY = r.y, maxY = r.y + r.height;
-            const chk = (x1, y1, x2, y2) => {
-                const den = (p1.x - p2.x) * (y1 - y2) - (p1.y - p2.y) * (x1 - x2);
-                if (den === 0) return false;
-                const t = ((p1.x - x1) * (y1 - y2) - (p1.y - y1) * (x1 - x2)) / den;
-                const u = -((p1.x - p2.x) * (p1.y - y1) - (p1.y - p2.y) * (p1.x - x1)) / den;
-                return t > 0 && t < 1 && u > 0 && u < 1;
-            };
-            return chk(minX, minY, maxX, minY) || chk(minX, minY, minX, maxY) || chk(maxX, minY, maxX, maxY) || chk(minX, maxY, maxX, maxY);
-        };
-        const coll = obs.filter(r => intersects(vseg.p1, vseg.p2, r));
-        if (coll.length) {
-            let maxRight = -Infinity;
-            coll.forEach(r => {maxRight = Math.max(maxRight, r.x + r.width)});
-            const detour = maxRight + 20;
-            pts[1].x = detour;
-            pts[2].x = detour;
-        }
-        return pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
-    }
-
     _route(a, b, routing, fromId, toId) {
-        switch (routing) {
-            case 'orthogonal':
-                return this._orth(a, b);
-            case 'avoidsNodes':
-                return this._avoids(a, b, fromId, toId);
-            case 'bezier':
-            default:
-                return this._bezier(a, b);
-        }
+        // Simplified: only orthogonal routing is supported
+        return this._orth(a, b);
     }
 
     render(svg, inner, nodes, ctx) {
@@ -459,7 +410,7 @@ class EdgeRenderer {
                 }
                 const hasPts = Array.isArray(conn.points) && conn.points.length > 0;
                 const build = (s, e, pts) => [s, ...pts, e].map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
-                const d = hasPts ? build(a, b, conn.points) : this._route(a, b, conn.routing || 'bezier', n.id, t.id);
+                const d = hasPts ? build(a, b, conn.points) : this._route(a, b, 'orthogonal', n.id, t.id);
                 const path = sv('path', {
                     d,
                     fill: 'none',
@@ -487,7 +438,7 @@ class EdgeRenderer {
                 if (ctx && ctx.lineControlsEnabled) {
                     const rerender = () => { requestAnimationFrame(() => this.render(svg, inner, nodes, ctx)); };
                     const rebuildPath = () => {
-                        const dNew = hasPts ? build(a, b, conn.points) : this._route(a, b, conn.routing || 'bezier', n.id, t.id);
+                        const dNew = hasPts ? build(a, b, conn.points) : this._route(a, b, 'orthogonal', n.id, t.id);
                         path.setAttribute('d', dNew);
                     };
                     this.handles.attach({svg, inner, a, b, conn, nodes, rebuildPath, rerender});
@@ -566,6 +517,12 @@ class NodeUI {
         this._getRenderOptions = () => option.renderOptions || this.defaultRenderOptions(this._ctx.state, svg, inner, this._ctx.nodes);
         this.rerender(nodesLayer, svg, inner, nodes, this._getRenderOptions());
         return {wrapper, inner, svg, nodesLayer};
+    }
+
+    setLineControlsEnabled(flag) {
+        if (!this._ctx) return;
+        this._ctx.lineControlsEnabled = !!flag;
+        this.refresh();
     }
 
     setNodes(nodes) { if (this._ctx) this._ctx.nodes = nodes; }
